@@ -18,7 +18,7 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load available documents on mount so users can see which docs are queryable
+  // 加载可用文档与历史对话，使刷新后可恢复
   useEffect(() => {
     let cancelled = false;
     documentApi.list(1, 100)
@@ -26,7 +26,16 @@ export default function ChatPage() {
         if (!cancelled) setDocuments(res.items);
       })
       .catch((err) => {
-        console.error('Failed to load documents for chat context:', err);
+        console.error('加载文档列表失败:', err);
+      });
+    chatApi.history()
+      .then((history) => {
+        if (cancelled) return;
+        // 后端 ChatMessage 字段对齐前端 ChatMessage
+        setMessages(history.map((m) => ({ id: m.id, role: m.role, content: m.content })));
+      })
+      .catch((err) => {
+        console.error('加载对话历史失败:', err);
       });
     return () => {
       cancelled = true;

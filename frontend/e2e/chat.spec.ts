@@ -342,4 +342,31 @@ test.describe('Chat Page - E2E', () => {
     // 按钮应禁用
     await expect(sendButton).toBeDisabled();
   });
+
+  test('刷新页面应恢复对话历史', async ({ page }) => {
+    // 发送 2 条消息 → 等待响应 → reload → 验证历史显示
+    const textarea = page.locator('textarea');
+    const sendButton = page.locator('button:has-text("发送")');
+
+    const firstMsg = 'reload-msg-1-' + Date.now();
+    await textarea.fill(firstMsg);
+    await sendButton.click();
+    await expect(page.locator('.message.user .content')).toContainText(firstMsg, { timeout: 5_000 });
+    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 10_000 });
+
+    const secondMsg = 'reload-msg-2-' + Date.now();
+    await textarea.fill(secondMsg);
+    await sendButton.click();
+    await expect(page.locator('.message.user .content').last()).toContainText(secondMsg, { timeout: 5_000 });
+
+    // reload 后 ChatPage 应调用 history 接口并恢复显示
+    await page.reload();
+    await page.waitForSelector('textarea');
+
+    await expect(page.locator('.message.user')).toHaveCount(2, { timeout: 5_000 });
+    await expect(page.locator('.message.assistant')).toHaveCount(2, { timeout: 10_000 });
+
+    await expect(page.locator('.message.user .content').first()).toContainText(firstMsg);
+    await expect(page.locator('.message.user .content').last()).toContainText(secondMsg);
+  });
 });
