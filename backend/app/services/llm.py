@@ -38,14 +38,9 @@ class OpenAIProvider:
         return cls._instance
 
     def __init__(self):
+        if getattr(self, "_initialized", False):
+            return
         self._initialized = True
-        self._client = AsyncOpenAI(
-            api_key=settings.openai_api_key or "sk-dummy-initial-key",
-            base_url=settings.openai_base_url,
-        )
-        self._model = settings.openai_model or settings.llm_model
-
-    def rebuild(self):
         self._client = AsyncOpenAI(
             api_key=settings.openai_api_key or "sk-dummy-initial-key",
             base_url=settings.openai_base_url,
@@ -95,14 +90,9 @@ class AnthropicProvider:
         return cls._instance
 
     def __init__(self):
+        if getattr(self, "_initialized", False):
+            return
         self._initialized = True
-        self._client = AsyncAnthropic(
-            api_key=settings.anthropic_api_key or "sk-ant-dummy-initial-key",
-            base_url=settings.anthropic_base_url,
-        )
-        self._model = settings.anthropic_model
-
-    def rebuild(self):
         self._client = AsyncAnthropic(
             api_key=settings.anthropic_api_key or "sk-ant-dummy-initial-key",
             base_url=settings.anthropic_base_url,
@@ -174,11 +164,9 @@ def get_llm_provider() -> LLMProvider:
 
 
 def reset_providers():
-    """Reset and rebuild all LLM provider instances to pick up new settings."""
-    if OpenAIProvider._instance is not None:
-        OpenAIProvider._instance.rebuild()
-    if AnthropicProvider._instance is not None:
-        AnthropicProvider._instance.rebuild()
+    """Clear LLM provider singletons so the next access rebuilds them with current settings."""
+    OpenAIProvider._instance = None
+    AnthropicProvider._instance = None
 
 
 # Backward compatibility alias

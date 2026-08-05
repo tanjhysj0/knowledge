@@ -6,7 +6,7 @@ pydantic-settings==2.2.1
 sqlalchemy==2.0.31
 asyncpg==0.29.0
 pymilvus==2.4.4
-anthropic==0.26.0
+anthropic>=0.39.0  # 0.39+ 兼容 httpx>=0.28（修复 #26：proxies kwarg 已被 httpx 0.28 移除）
 pdfplumber==0.11.0
 python-docx==1.1.0
 python-dotenv==1.0.1

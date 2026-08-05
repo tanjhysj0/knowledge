@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, AsyncGenerator
 from app.services.vector_store import VectorStoreService
-from app.services.llm import LLMService
+from app.services.llm import get_llm_provider
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -13,7 +13,10 @@ class RAGService:
 
     def __init__(self):
         self._vector_store = VectorStoreService()
-        self._llm = LLMService()
+
+    def _llm(self):
+        """Resolve the current LLM provider on each call so settings changes take effect."""
+        return get_llm_provider()
 
     def _build_rag_prompt(self, question: str, context_chunks: List[Dict[str, Any]]) -> str:
         if not context_chunks:
@@ -58,7 +61,7 @@ Please answer this question based on your general knowledge."""
             else self._build_rag_prompt(question, search_results)
         )
         messages = [{"role": "user", "content": prompt}]
-        answer_text = await self._llm.chat(messages)
+        answer_text = await self._llm().chat(messages)
 
         sources = []
         seen_docs = set()
@@ -101,7 +104,7 @@ Please answer this question based on your general knowledge."""
 
         try:
             full_answer = ""
-            async for chunk in self._llm.stream_chat(messages=messages):
+            async for chunk in self._llm().stream_chat(messages=messages):
                 full_answer += chunk
                 yield {"chunk": chunk, "done": False, "sources": sources, "error": None}
             yield {"chunk": "", "done": True, "sources": sources, "error": None}
