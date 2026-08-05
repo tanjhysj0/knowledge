@@ -7,11 +7,6 @@ const LLM_PROVIDERS = [
   { value: 'anthropic', label: 'Anthropic' },
 ];
 
-const EMBEDDING_PROVIDERS = [
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'cohere', label: 'Cohere' },
-];
-
 interface ProviderConfigProps {
   title: string;
   provider: string;
@@ -99,19 +94,11 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // LLM settings
   const [llmProvider, setLlmProvider] = useState('openai');
   const [llmApiKeyMasked, setLlmApiKeyMasked] = useState('');
   const [llmApiKey, setLlmApiKey] = useState('');
   const [llmBaseUrl, setLlmBaseUrl] = useState('');
   const [llmModel, setLlmModel] = useState('');
-
-  // Embedding settings
-  const [embeddingProvider, setEmbeddingProvider] = useState('openai');
-  const [embeddingApiKeyMasked, setEmbeddingApiKeyMasked] = useState('');
-  const [embeddingApiKey, setEmbeddingApiKey] = useState('');
-  const [embeddingBaseUrl, setEmbeddingBaseUrl] = useState('');
-  const [embeddingModel, setEmbeddingModel] = useState('');
 
   useEffect(() => {
     loadSettings();
@@ -126,10 +113,6 @@ export default function SettingsPage() {
       setLlmApiKeyMasked(settings.llm.api_key_masked);
       setLlmBaseUrl(settings.llm.base_url);
       setLlmModel(settings.llm.model);
-      setEmbeddingProvider(settings.embedding.provider);
-      setEmbeddingApiKeyMasked(settings.embedding.api_key_masked);
-      setEmbeddingBaseUrl(settings.embedding.base_url);
-      setEmbeddingModel(settings.embedding.model);
     } catch (err) {
       setError('加载配置失败，请检查后端服务是否运行');
       console.error(err);
@@ -148,24 +131,15 @@ export default function SettingsPage() {
         llm_provider: llmProvider,
         llm_base_url: llmBaseUrl,
         llm_model: llmModel,
-        embedding_provider: embeddingProvider,
-        embedding_base_url: embeddingBaseUrl,
-        embedding_model: embeddingModel,
       };
 
-      // Only include API key if user entered a new one
       if (llmApiKey) {
         update.llm_api_key = llmApiKey;
-      }
-      if (embeddingApiKey) {
-        update.embedding_api_key = embeddingApiKey;
       }
 
       await settingsApi.update(update);
 
-      // Clear the API key fields after successful save
       setLlmApiKey('');
-      setEmbeddingApiKey('');
       setSuccess('配置已保存并生效');
     } catch (err) {
       setError('保存配置失败，请检查 API Key 和网络连接');
@@ -211,19 +185,6 @@ export default function SettingsPage() {
           onApiKeyChange={setLlmApiKey}
           onBaseUrlChange={setLlmBaseUrl}
           onModelChange={setLlmModel}
-        />
-
-        <ProviderConfig
-          title="Embedding 配置"
-          provider={embeddingProvider}
-          providers={EMBEDDING_PROVIDERS}
-          apiKeyMasked={embeddingApiKeyMasked}
-          baseUrl={embeddingBaseUrl}
-          model={embeddingModel}
-          onProviderChange={setEmbeddingProvider}
-          onApiKeyChange={setEmbeddingApiKey}
-          onBaseUrlChange={setEmbeddingBaseUrl}
-          onModelChange={setEmbeddingModel}
         />
       </div>
 

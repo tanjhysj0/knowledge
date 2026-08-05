@@ -47,16 +47,8 @@ export interface LLMSettings {
   model: string;
 }
 
-export interface EmbeddingSettings {
-  provider: string;
-  api_key_masked: string;
-  base_url: string;
-  model: string;
-}
-
 export interface SettingsResponse {
   llm: LLMSettings;
-  embedding: EmbeddingSettings;
 }
 
 export interface SettingsUpdate {
@@ -64,8 +56,4 @@ export interface SettingsUpdate {
   llm_api_key?: string;
   llm_base_url?: string;
   llm_model?: string;
-  embedding_provider?: string;
-  embedding_api_key?: string;
-  embedding_base_url?: string;
-  embedding_model?: string;
 }

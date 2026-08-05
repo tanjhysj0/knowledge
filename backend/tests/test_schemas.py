@@ -13,7 +13,6 @@ from app.models.schemas import (
     PaginationParams,
     PaginatedDocumentsResponse,
     LLMSettings,
-    EmbeddingSettings,
     SettingsResponse,
     SettingsUpdate,
 )
@@ -176,16 +175,6 @@ class TestSettingsSchemas:
         assert settings.api_key_masked == "sk-***"
         assert settings.model == "gpt-4"
 
-    def test_embedding_settings_valid(self):
-        settings = EmbeddingSettings(
-            provider="openai",
-            api_key_masked="sk-***",
-            base_url="https://api.openai.com",
-            model="text-embedding-3-small",
-        )
-        assert settings.provider == "openai"
-        assert settings.model == "text-embedding-3-small"
-
     def test_settings_response_valid(self):
         resp = SettingsResponse(
             llm=LLMSettings(
@@ -194,22 +183,14 @@ class TestSettingsSchemas:
                 base_url="https://api.openai.com",
                 model="gpt-4",
             ),
-            embedding=EmbeddingSettings(
-                provider="openai",
-                api_key_masked="sk-***",
-                base_url="https://api.openai.com",
-                model="text-embedding-3-small",
-            ),
         )
         assert resp.llm.provider == "openai"
-        assert resp.embedding.provider == "openai"
 
     def test_settings_update_partial(self):
         """Test that SettingsUpdate allows partial updates."""
         update = SettingsUpdate(llm_model="gpt-4-turbo")
         assert update.llm_model == "gpt-4-turbo"
         assert update.llm_provider is None
-        assert update.embedding_provider is None
 
     def test_settings_update_all_fields(self):
         """Test SettingsUpdate with all fields."""
@@ -218,17 +199,11 @@ class TestSettingsSchemas:
             llm_api_key="sk-ant-***",
             llm_base_url="https://api.anthropic.com",
             llm_model="claude-3-opus",
-            embedding_provider="cohere",
-            embedding_api_key="cohere-***",
-            embedding_base_url="https://api.cohere.com",
-            embedding_model="embed-english-v3.0",
         )
         assert update.llm_provider == "anthropic"
-        assert update.embedding_provider == "cohere"
-        assert update.embedding_model == "embed-english-v3.0"
+        assert update.llm_model == "claude-3-opus"
 
     def test_settings_update_empty(self):
         """Test that SettingsUpdate with no fields is valid."""
         update = SettingsUpdate()
         assert update.llm_provider is None
-        assert update.embedding_provider is None

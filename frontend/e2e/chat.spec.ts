@@ -44,18 +44,10 @@ async function configureBackendSettings(baseUrl: string, apiKey: string, model: 
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        llm: {
-          provider: 'openai',
-          api_key: apiKey,
-          base_url: 'https://api.minimaxi.com/v1',
-          model: model,
-        },
-        embedding: {
-          provider: 'openai',
-          api_key: apiKey,
-          base_url: 'https://api.minimaxi.com/v1',
-          model: 'text-embedding-3-small',
-        },
+        llm_provider: 'openai',
+        llm_api_key: apiKey,
+        llm_base_url: 'https://api.minimaxi.com/v1',
+        llm_model: model,
       }),
     });
   } catch (e) {

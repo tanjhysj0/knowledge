@@ -1,4 +1,23 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, request as apiRequest } from '@playwright/test';
+
+const BACKEND_BASE = 'http://localhost:8000';
+
+async function listDocumentsViaApi(): Promise<{ id: number; filename: string; chunk_count: number; size: number }[]> {
+  const ctx = await apiRequest.newContext({ baseURL: BACKEND_BASE });
+  const res = await ctx.get('/api/documents?page=1&page_size=100');
+  expect(res.ok()).toBeTruthy();
+  const body = await res.json();
+  await ctx.dispose();
+  return body.items;
+}
+
+async function deleteDocumentViaApi(id: number): Promise<number> {
+  const ctx = await apiRequest.newContext({ baseURL: BACKEND_BASE });
+  const res = await ctx.delete(`/api/documents/${id}`);
+  const status = res.status();
+  await ctx.dispose();
+  return status;
+}
 
 test.describe('Documents Page - E2E', () => {
   test.beforeEach(async ({ page }) => {
@@ -27,19 +46,19 @@ test.describe('Documents Page - E2E', () => {
 
   test('should navigate to next page when pagination exists', async ({ page }) => {
     await page.waitForSelector('.pagination', { state: 'visible', timeout: 10000 }).catch(() => {});
-    
+
     const hasPagination = await page.locator('.pagination').isVisible().catch(() => false);
-    
+
     if (hasPagination) {
       const nextButton = page.locator('button:has-text("下一页")');
       const isDisabled = await nextButton.isDisabled().catch(() => true);
-      
+
       if (!isDisabled) {
         const pageInfoBefore = await page.locator('.pagination-info').textContent().catch(() => '');
-        
+
         await nextButton.click();
         await page.waitForLoadState('networkidle').catch(() => {});
-        
+
         const pageInfoAfter = await page.locator('.pagination-info').textContent().catch(() => '');
         expect(pageInfoAfter).not.toBe(pageInfoBefore);
       }
@@ -48,13 +67,13 @@ test.describe('Documents Page - E2E', () => {
 
   test('should navigate to previous page from pagination', async ({ page }) => {
     await page.waitForSelector('.pagination', { state: 'visible', timeout: 10000 }).catch(() => {});
-    
+
     const hasPagination = await page.locator('.pagination').isVisible().catch(() => false);
-    
+
     if (hasPagination) {
       const prevButton = page.locator('button:has-text("上一页")');
       const isDisabled = await prevButton.isDisabled().catch(() => true);
-      
+
       if (!isDisabled) {
         const pageInfoBefore = await page.locator('.pagination-info').textContent().catch(() => '');
         await prevButton.click();
@@ -68,23 +87,22 @@ test.describe('Documents Page - E2E', () => {
   test('should show error message for unsupported file type upload', async ({ page }) => {
     const fileInput = page.locator('input[type="file"]');
     await expect(fileInput).toBeAttached();
-    
+
     const testFile = {
       name: 'test.exe',
       mimeType: 'application/x-msdownload',
       buffer: Buffer.from('test content'),
     };
-    
+
     await fileInput.setInputFiles(testFile);
-    
-    // Should show error for unsupported file type
+
     const errorVisible = await page.locator('.error-message').isVisible({ timeout: 3000 }).catch(() => false);
     expect(errorVisible).toBeTruthy();
   });
 
   test('should show drag-over state when dragging file over upload zone', async ({ page }) => {
     const uploadZone = page.locator('.upload-zone');
-    
+
     await page.evaluate(() => {
       const zone = document.querySelector('.upload-zone') as HTMLElement;
       if (zone) {
@@ -95,84 +113,141 @@ test.describe('Documents Page - E2E', () => {
         }));
       }
     });
-    
-    // Check dragging class is added
+
     const hasDraggingClass = await uploadZone.evaluate(el => el.classList.contains('dragging'));
     expect(hasDraggingClass).toBeTruthy();
   });
 
-  test('should upload file via click and show progress', async ({ page }) => {
-    const fileInput = page.locator('input[type="file"]');
-    await expect(fileInput).toBeAttached();
-    
+  test('should upload txt file and verify it appears in the list with correct metadata', async ({ page }) => {
+    const filename = `e2e-upload-${Date.now()}.txt`;
     const testContent = 'This is a test document for E2E testing.';
+    const fileInput = page.locator('input[type="file"]');
+
+    const beforeCount = (await listDocumentsViaApi()).length;
+
     await fileInput.setInputFiles({
-      name: 'e2e-test.txt',
+      name: filename,
       mimeType: 'text/plain',
       buffer: Buffer.from(testContent),
     });
-    
-    // Should show uploading state or complete
-    await page.waitForTimeout(500);
+
+    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 15000 });
+    await expect(page.locator(`.doc-item:has-text("${filename}") .doc-item-meta`)).toBeVisible();
+
+    const uploadedDoc = (await listDocumentsViaApi()).find(d => d.filename === filename);
+    expect(uploadedDoc).toBeDefined();
+    expect(uploadedDoc!.chunk_count).toBeGreaterThan(0);
+
+    const afterCount = (await listDocumentsViaApi()).length;
+    expect(afterCount).toBe(beforeCount + 1);
   });
 
-  test('should display upload progress bar during upload', async ({ page }) => {
+  test('should complete upload of large markdown file and persist in backend', async ({ page }) => {
+    const filename = `progress-test-${Date.now()}.md`;
+    const testContent = 'Test document content for progress bar testing. '.repeat(200);
     const fileInput = page.locator('input[type="file"]');
-    await expect(fileInput).toBeAttached();
-    
-    // Upload a file
-    const testContent = 'Test document content for progress bar testing. '.repeat(100);
+
     await fileInput.setInputFiles({
-      name: 'progress-test.md',
+      name: filename,
       mimeType: 'text/markdown',
       buffer: Buffer.from(testContent),
     });
-    
-    // Progress bar might appear briefly
-    const progressBarVisible = await page.locator('.upload-progress-bar').isVisible().catch(() => false);
-    const uploadInfoVisible = await page.locator('.upload-progress-info').isVisible().catch(() => false);
-    
-    // Either progress shows or upload completes
-    expect(progressBarVisible || uploadInfoVisible || true).toBeTruthy();
+
+    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 15000 });
+
+    const uploadedDoc = (await listDocumentsViaApi()).find(d => d.filename === filename);
+    expect(uploadedDoc).toBeDefined();
+    expect(uploadedDoc!.size).toBeGreaterThan(1000);
+    expect(uploadedDoc!.chunk_count).toBeGreaterThan(0);
   });
 
-  test('should delete document when clicking delete button', async ({ page }) => {
+  test('should upload markdown file and verify chunks are created in backend', async ({ page }) => {
+    const filename = `test-doc-${Date.now()}.md`;
+    const mdContent = `# Test Document
+
+This is a test markdown document.
+
+## Section 1
+Content for section 1.
+
+## Section 2
+Content for section 2.
+`;
     const fileInput = page.locator('input[type="file"]');
-    
-    // Upload a document first
-    const testContent = 'Document to be deleted: ' + Date.now();
+
     await fileInput.setInputFiles({
-      name: 'to-delete.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from(testContent),
+      name: filename,
+      mimeType: 'text/markdown',
+      buffer: Buffer.from(mdContent),
     });
-    
-    await page.waitForTimeout(3000);
-    
-    const deleteButtons = page.locator('button:has-text("删除")');
-    const count = await deleteButtons.count();
-    
-    if (count > 0) {
-      page.on('dialog', dialog => dialog.accept().catch(() => {}));
-      await deleteButtons.first().click();
-      await page.waitForTimeout(1000);
-    }
+
+    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 15000 });
+
+    const uploadedDoc = (await listDocumentsViaApi()).find(d => d.filename === filename);
+    expect(uploadedDoc).toBeDefined();
+    expect(uploadedDoc!.chunk_count).toBeGreaterThan(0);
   });
 
-  test('should show error when delete fails (non-existent document)', async ({ page }) => {
-    const deleteButtons = page.locator('button:has-text("删除")');
-    const count = await deleteButtons.count();
-    
-    if (count > 0) {
-      const color = await deleteButtons.first().evaluate(el => getComputedStyle(el).color);
-      expect(color).toContain('244');
-    }
+  test('should delete document and verify it disappears from list and backend', async ({ page }) => {
+    const filename = `to-delete-${Date.now()}.txt`;
+    const fileInput = page.locator('input[type="file"]');
+
+    await fileInput.setInputFiles({
+      name: filename,
+      mimeType: 'text/plain',
+      buffer: Buffer.from('Document to be deleted: ' + Date.now()),
+    });
+
+    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 15000 });
+
+    const beforeDocs = await listDocumentsViaApi();
+    const targetDoc = beforeDocs.find(d => d.filename === filename);
+    expect(targetDoc).toBeDefined();
+    expect(targetDoc!.chunk_count).toBeGreaterThan(0);
+
+    page.on('dialog', dialog => dialog.accept().catch(() => {}));
+
+    const docItem = page.locator(`.doc-item:has-text("${filename}")`).first();
+    await docItem.locator('button:has-text("删除")').click();
+
+    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toHaveCount(0, { timeout: 10000 });
+
+    const afterDocs = await listDocumentsViaApi();
+    expect(afterDocs.find(d => d.filename === filename)).toBeUndefined();
+    expect(afterDocs.length).toBe(beforeDocs.length - 1);
+  });
+
+  test('should show error when deleting a non-existent document (404)', async ({ page }) => {
+    page.on('dialog', dialog => dialog.accept().catch(() => {}));
+
+    const filename = `to-delete-404-${Date.now()}.txt`;
+    const fileInput = page.locator('input[type="file"]');
+    await fileInput.setInputFiles({
+      name: filename,
+      mimeType: 'text/plain',
+      buffer: Buffer.from('will be deleted twice'),
+    });
+
+    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 15000 });
+
+    const targetDoc = (await listDocumentsViaApi()).find(d => d.filename === filename);
+    expect(targetDoc).toBeDefined();
+
+    const statusFromApi = await deleteDocumentViaApi(targetDoc!.id);
+    expect(statusFromApi).toBe(200);
+
+    await page.reload();
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toHaveCount(0);
+
+    const statusSecondDelete = await deleteDocumentViaApi(targetDoc!.id);
+    expect(statusSecondDelete).toBe(404);
   });
 
   test('should display document metadata correctly', async ({ page }) => {
     const docItems = page.locator('.doc-item');
     const count = await docItems.count();
-    
+
     if (count > 0) {
       const firstDoc = docItems.first();
       await expect(firstDoc.locator('.doc-item-name')).toBeVisible();
@@ -182,11 +257,11 @@ test.describe('Documents Page - E2E', () => {
 
   test('should handle pagination correctly with many documents', async ({ page }) => {
     const hasPagination = await page.locator('.pagination').isVisible().catch(() => false);
-    
+
     if (hasPagination) {
       const paginationInfo = page.locator('.pagination-info');
       await expect(paginationInfo).toBeVisible();
-      
+
       const infoText = await paginationInfo.textContent();
       expect(infoText?.match(/第 \d+ \/ \d+ 页/)).toBeTruthy();
       expect(infoText?.match(/共 \d+ 个文档/)).toBeTruthy();
@@ -195,21 +270,21 @@ test.describe('Documents Page - E2E', () => {
 
   test('should disable prev button on first page', async ({ page }) => {
     const hasPagination = await page.locator('.pagination').isVisible().catch(() => false);
-    
+
     if (hasPagination) {
       const prevButton = page.locator('button:has-text("上一页")');
       const isDisabled = await prevButton.isDisabled().catch(() => false);
-      
+
       const pageInfo = (await page.locator('.pagination-info').textContent().catch(() => '') || '');
       const isFirstPage = pageInfo.includes('第 1 /');
-      
+
       expect(isDisabled || !isFirstPage).toBeTruthy();
     }
   });
 
   test('should disable next button on last page', async ({ page }) => {
     const hasPagination = await page.locator('.pagination').isVisible().catch(() => false);
-    
+
     if (hasPagination) {
       let nextButton = page.locator('button:has-text("下一页")');
       while (!(await nextButton.isDisabled().catch(() => false))) {
@@ -217,7 +292,7 @@ test.describe('Documents Page - E2E', () => {
         await page.waitForTimeout(500);
         nextButton = page.locator('button:has-text("下一页")');
       }
-      
+
       const isDisabled = await nextButton.isDisabled().catch(() => false);
       expect(isDisabled).toBeTruthy();
     }
@@ -225,25 +300,18 @@ test.describe('Documents Page - E2E', () => {
 
   test('should clear error message when clicking on it', async ({ page }) => {
     const fileInput = page.locator('input[type="file"]');
-    
-    // Trigger an error with unsupported file
+
     await fileInput.setInputFiles({
       name: 'bad.exe',
       mimeType: 'application/octet-stream',
       buffer: Buffer.from('test'),
     });
-    
-    await page.waitForTimeout(500);
-    
-    const errorMsg = page.locator('.error-message');
-    const hasError = await errorMsg.isVisible().catch(() => false);
-    
-    if (hasError) {
-      await errorMsg.click();
-      await page.waitForTimeout(300);
-      const stillHasError = await errorMsg.isVisible().catch(() => false);
-      expect(stillHasError).toBeFalsy();
-    }
+
+    await expect(page.locator('.error-message')).toBeVisible({ timeout: 3000 });
+
+    await page.locator('.error-message').click();
+    await page.waitForTimeout(300);
+    await expect(page.locator('.error-message')).toHaveCount(0);
   });
 
   test('should show file format restrictions in upload zone', async ({ page }) => {
@@ -252,43 +320,5 @@ test.describe('Documents Page - E2E', () => {
     await expect(small).toContainText('MD');
     await expect(small).toContainText('PDF');
     await expect(small).toContainText('DOCX');
-  });
-
-  test('should upload markdown file successfully', async ({ page }) => {
-    const fileInput = page.locator('input[type="file"]');
-    
-    const mdContent = `# Test Document
-
-This is a test markdown document.
-
-## Section 1
-Content for section 1.
-`;
-    
-    await fileInput.setInputFiles({
-      name: 'test-doc.md',
-      mimeType: 'text/markdown',
-      buffer: Buffer.from(mdContent),
-    });
-    
-    await page.waitForTimeout(3000);
-  });
-
-  test('should show uploading state during file upload', async ({ page }) => {
-    const fileInput = page.locator('input[type="file"]');
-    
-    // Upload a file
-    await fileInput.setInputFiles({
-      name: 'uploading-test.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from('test content'),
-    });
-    
-    // Check if upload progress info shows filename
-    const uploadProgressInfo = page.locator('.upload-progress-info');
-    const infoVisible = await uploadProgressInfo.isVisible().catch(() => false);
-    
-    // Either progress shows or already completed
-    expect(infoVisible || true).toBeTruthy();
   });
 });

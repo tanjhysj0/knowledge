@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.models.schemas import SettingsResponse, SettingsUpdate, LLMSettings, EmbeddingSettings
+from app.models.schemas import SettingsResponse, SettingsUpdate, LLMSettings
 from app.core.config import get_settings
 
 router = APIRouter()
@@ -32,41 +32,19 @@ def get_llm_config() -> LLMSettings:
     )
 
 
-def get_embedding_config() -> EmbeddingSettings:
-    """Get current Embedding configuration with masked API key."""
-    settings = get_settings()
-    if settings.embedding_provider == "cohere":
-        return EmbeddingSettings(
-            provider=settings.embedding_provider,
-            api_key_masked=mask_api_key(settings.cohere_api_key),
-            base_url=settings.cohere_base_url,
-            model=settings.cohere_embedding_model,
-        )
-    return EmbeddingSettings(
-        provider=settings.embedding_provider,
-        api_key_masked=mask_api_key(settings.openai_api_key),
-        base_url=settings.openai_base_url,
-        model=settings.embedding_model,
-    )
-
-
 @router.get("", response_model=SettingsResponse)
 async def get_settings_api():
-    """Get current LLM/Embedding configuration (API keys masked)."""
-    return SettingsResponse(
-        llm=get_llm_config(),
-        embedding=get_embedding_config(),
-    )
+    """Get current LLM configuration (API key masked)."""
+    return SettingsResponse(llm=get_llm_config())
 
 
 @router.put("")
 async def update_settings(update: SettingsUpdate):
-    """Update LLM/Embedding configuration and reinitialize providers."""
-    from app.services import llm as llm_service, embedding as embedding_service
+    """Update LLM configuration and reinitialize providers."""
+    from app.services import llm as llm_service
 
     settings = get_settings()
 
-    # Update LLM settings
     if update.llm_provider is not None:
         settings.llm_provider = update.llm_provider
     if update.llm_api_key is not None:
@@ -85,33 +63,9 @@ async def update_settings(update: SettingsUpdate):
         else:
             settings.openai_model = update.llm_model
 
-    # Update Embedding settings
-    if update.embedding_provider is not None:
-        settings.embedding_provider = update.embedding_provider
-    if update.embedding_api_key is not None:
-        if settings.embedding_provider == "cohere":
-            settings.cohere_api_key = update.embedding_api_key
-        else:
-            settings.openai_api_key = update.embedding_api_key
-    if update.embedding_base_url is not None:
-        if settings.embedding_provider == "cohere":
-            settings.cohere_base_url = update.embedding_base_url
-        else:
-            settings.openai_base_url = update.embedding_base_url
-    if update.embedding_model is not None:
-        if settings.embedding_provider == "cohere":
-            settings.cohere_embedding_model = update.embedding_model
-        else:
-            settings.embedding_model = update.embedding_model
-
-    # Reinitialize providers
     llm_service.reset_providers()
-    embedding_service.reset_providers()
 
     return {
         "message": "Settings updated and providers reinitialized",
-        "settings": {
-            "llm": get_llm_config().model_dump(),
-            "embedding": get_embedding_config().model_dump(),
-        }
+        "settings": {"llm": get_llm_config().model_dump()},
     }

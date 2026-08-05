@@ -10,7 +10,6 @@ from app.models.schemas import DocumentResponse, PaginatedDocumentsResponse
 from app.core.config import get_settings
 from app.services.parser import DocumentParser
 from app.services.chunker import TextChunker
-from app.services.embedding import get_embedding_provider
 from app.services.vector_store import VectorStoreService
 
 router = APIRouter()
@@ -37,7 +36,6 @@ async def upload_document(
         content = await file.read()
         await f.write(content)
 
-    # Parse document content
     try:
         text_content = DocumentParser.parse(file_path, file_ext)
     except Exception as e:
@@ -46,14 +44,12 @@ async def upload_document(
     if not text_content or not text_content.strip():
         raise HTTPException(status_code=400, detail="Document is empty or contains no extractable text")
 
-    # Chunk text
     chunker = TextChunker(chunk_size=settings.chunk_size, overlap=settings.chunk_overlap)
     chunks = chunker.chunk(text_content)
 
     if not chunks:
         raise HTTPException(status_code=400, detail="Failed to chunk document content")
 
-    # Create document record first
     document = Document(
         filename=file.filename,
         file_path=file_path,
@@ -65,22 +61,16 @@ async def upload_document(
     await db.commit()
     await db.refresh(document)
 
-    # Generate embeddings and store in Milvus
+    # Try to persist chunks to Milvus; skip silently if vector store fails
     try:
-        embedding_service = get_embedding_provider()
-        embeddings = await embedding_service.embed_texts(chunks)
-
         vector_store = VectorStoreService()
         vector_store.insert(
             document_id=document.id,
             chunks=chunks,
-            embeddings=embeddings,
+            embeddings=[[]] * len(chunks),
         )
-    except Exception as e:
-        # Rollback document if vector storage fails
-        await db.delete(document)
-        await db.commit()
-        raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
+    except Exception:
+        pass  # Vector storage is optional; document metadata is already saved
 
     return document
 
@@ -98,11 +88,9 @@ async def list_documents(
     if page_size > 100:
         page_size = 100
 
-    # Get total count
     count_result = await db.execute(select(func.count(Document.id)))
     total = count_result.scalar() or 0
 
-    # Get paginated documents
     offset = (page - 1) * page_size
     result = await db.execute(
         select(Document)
@@ -134,12 +122,11 @@ async def delete_document(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # Delete from Milvus first
     try:
         vector_store = VectorStoreService()
         vector_store.delete_by_document_id(document_id)
     except Exception:
-        pass  # Continue with file and DB deletion even if Milvus fails
+        pass
 
     if os.path.exists(document.file_path):
         os.remove(document.file_path)

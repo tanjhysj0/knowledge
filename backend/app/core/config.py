@@ -13,20 +13,11 @@ class Settings(BaseSettings):
 
     # Anthropic
     anthropic_api_key: str = ""
-    anthropic_base_url: str = "https://api.anthropic.com/v1"
+    anthropic_base_url: str = "https://api.anthropic.com"
     anthropic_model: str = "claude-3-5-sonnet-20241022"
 
     # Shared model settings (deprecated, use provider-specific models)
     llm_model: str = "gpt-4o-mini"
-    embedding_model: str = "text-embedding-3-small"
-
-    # Embedding Provider
-    embedding_provider: str = "openai"  # "openai" or "cohere"
-
-    # Cohere
-    cohere_api_key: str = ""
-    cohere_base_url: str = "https://api.cohere.ai/v1"
-    cohere_embedding_model: str = "embed-english-v3.0"
 
     # Milvus
     milvus_host: str = "localhost"

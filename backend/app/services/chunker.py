@@ -3,7 +3,7 @@ import re
 
 
 class TextChunker:
-    """Split text into overlapping chunks for embedding."""
+    """Split text into overlapping chunks for storage and retrieval."""
 
     def __init__(self, chunk_size: int = 500, overlap: int = 50):
         self.chunk_size = chunk_size
