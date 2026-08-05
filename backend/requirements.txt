@@ -8,6 +8,7 @@ asyncpg==0.29.0
 pymilvus==2.4.4
 llama-index==0.10.48
 llama-index-llms-openai==0.1.21
+anthropic==0.26.0
 llama-index-embeddings-openai==0.1.10
 llama-index-vector-stores-milvus==0.1.6
 pdfplumber==0.11.0

@@ -3,9 +3,20 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
+    # LLM Provider
+    llm_provider: str = "openai"  # "openai" or "anthropic"
+
     # OpenAI
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-4o-mini"
+
+    # Anthropic
+    anthropic_api_key: str = ""
+    anthropic_base_url: str = "https://api.anthropic.com/v1"
+    anthropic_model: str = "claude-3-5-sonnet-20241022"
+
+    # Shared model settings (deprecated, use provider-specific models)
     llm_model: str = "gpt-4o-mini"
     embedding_model: str = "text-embedding-3-small"
 
