@@ -1,13 +1,36 @@
-# Agent Skills
+# Agent 技能
 
-## Issue tracker
+## 问题跟踪（Issue tracker）
 
-Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations. External PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+本仓库的 Issue 和 PRD 以 GitHub issues 形式承载。所有操作使用 `gh` CLI。外部 PR 不属于分类处理范围。详见 `docs/agents/issue-tracker.md`。
 
-## Triage labels
+## 分类标签（Triage labels）
 
-Uses the canonical label vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+使用规范的标签词汇：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`。详见 `docs/agents/triage-labels.md`。
 
-## Domain docs
+## 核心目标
 
-Multi-context layout: `CONTEXT-MAP.md` at the root points to per-context `CONTEXT.md` files and their `docs/adr/` directories. See `docs/agents/domain.md`.
+AI 自身没有时间感知，无法预估命令执行时长。为彻底消除界面冻结和挂起进程，所有终端命令必须使用统一包装器以异步方式执行。
+
+---
+
+## 强制执行模式
+
+每一个终端命令（无例外）必须按标准异步包装器执行：
+
+```bash
+# 后台执行命令，捕获输出与 PID
+<YOUR_COMMAND> > /tmp/agent_cmd.log 2>&1 & CMD_PID=$!
+```
+或
+```bash
+`timeout 15 npx playwright test e2e/api.spec.ts`
+```
+
+## 域文档（Domain docs）
+
+多上下文布局：根目录的 `CONTEXT-MAP.md` 指向各上下文的 `CONTEXT.md` 及其 `docs/adr/` 目录。详见 `docs/agents/domain.md`。
+
+## Issue 完成后必须执行 `make test`
+
+每一个 Issue 的代码修改完成后，必须执行 `make test` 并确认无错误后方可继续。
