@@ -34,7 +34,8 @@ async def health_check():
     return {"status": "healthy"}
 
 
-from app.api import documents, chat
+from app.api import documents, chat, settings
 
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(settings.router, prefix="/api/settings", tags=["settings"])

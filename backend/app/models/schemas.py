@@ -63,3 +63,33 @@ class PaginatedDocumentsResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class LLMSettings(BaseModel):
+    provider: str
+    api_key_masked: str  # Masked, e.g. "sk-***"
+    base_url: str
+    model: str
+
+
+class EmbeddingSettings(BaseModel):
+    provider: str
+    api_key_masked: str  # Masked, e.g. "sk-***"
+    base_url: str
+    model: str
+
+
+class SettingsResponse(BaseModel):
+    llm: LLMSettings
+    embedding: EmbeddingSettings
+
+
+class SettingsUpdate(BaseModel):
+    llm_provider: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_base_url: Optional[str] = None
+    llm_model: Optional[str] = None
+    embedding_provider: Optional[str] = None
+    embedding_api_key: Optional[str] = None
+    embedding_base_url: Optional[str] = None
+    embedding_model: Optional[str] = None

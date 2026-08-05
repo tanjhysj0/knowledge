@@ -163,5 +163,11 @@ def get_llm_provider() -> LLMProvider:
     return OpenAIProvider()
 
 
+def reset_providers():
+    """Reset all LLM provider instances to allow reinitialization with new settings."""
+    OpenAIProvider._instance = None
+    AnthropicProvider._instance = None
+
+
 # Backward compatibility alias
 LLMService = OpenAIProvider

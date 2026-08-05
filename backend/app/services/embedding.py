@@ -100,5 +100,11 @@ def get_embedding_provider() -> EmbeddingProvider:
     return OpenAIEmbeddingProvider()
 
 
+def reset_providers():
+    """Reset all embedding provider instances to allow reinitialization with new settings."""
+    OpenAIEmbeddingProvider._instance = None
+    CohereEmbeddingProvider._instance = None
+
+
 # Backward compatibility alias
 EmbeddingService = OpenAIEmbeddingProvider
