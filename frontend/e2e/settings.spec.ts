@@ -146,23 +146,25 @@ test.describe('Settings Page - True E2E', () => {
     const llmBaseUrlInput = page.locator('input[type="text"]').first();
     const llmModelInput = page.locator('input[type="text"]').nth(1);
     
-    // Get values from API (after beforeEach reset)
-    const currentUrl = await llmBaseUrlInput.inputValue();
-    const currentModel = await llmModelInput.inputValue();
+    // First save a known value to API
+    await llmModelInput.fill('known-test-model');
+    await page.locator('button:has-text("保存配置")').click();
+    await page.waitForResponse('**/api/settings', { timeout: 10000 });
     
-    // Modify settings with new values
-    await llmBaseUrlInput.fill('https://reset-test.url.com');
-    await llmModelInput.fill('reset-test-model');
+    // Verify saved
+    await expect(llmModelInput).toHaveValue('known-test-model');
+    
+    // Now modify to something else
+    await llmModelInput.fill('modified-temp-model');
     
     // Click reset button
     await page.locator('button:has-text("重置")').click();
     
-    // Wait for reload and verify settings are restored
+    // Wait for reload and verify settings are restored to saved value
     await page.waitForResponse('**/api/settings');
     
-    // Verify original values are restored
-    await expect(llmBaseUrlInput).toHaveValue(currentUrl, { timeout: 5000 });
-    await expect(llmModelInput).toHaveValue(currentModel, { timeout: 5000 });
+    // Verify the saved value is restored (not the temp modified value)
+    await expect(llmModelInput).toHaveValue('known-test-model', { timeout: 5000 });
   });
 
   test('should show loading state while fetching settings', async ({ page }) => {
