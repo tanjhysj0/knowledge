@@ -3,6 +3,18 @@ import { test, expect } from '@playwright/test';
 test.describe('Settings Page - True E2E', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/settings');
+    await page.waitForSelector('input[type="text"]');
+    
+    // Always reset to default model to avoid state pollution from previous tests
+    const llmModelInput = page.locator('input[type="text"]').nth(1);
+    const currentValue = await llmModelInput.inputValue();
+    if (currentValue !== 'gpt-4o-mini') {
+      await llmModelInput.fill('gpt-4o-mini');
+      await page.locator('button:has-text("保存配置")').click();
+      await page.waitForResponse('**/api/settings', { timeout: 10000 }).catch(() => {});
+      await page.reload();
+      await page.waitForSelector('input[type="text"]');
+    }
   });
 
   test('should display page title and current configuration', async ({ page }) => {
@@ -131,15 +143,14 @@ test.describe('Settings Page - True E2E', () => {
   test('should reset to original configuration when clicking reset button', async ({ page }) => {
     await page.waitForSelector('input[type="text"]');
     
-    // Store current values from API
     const llmBaseUrlInput = page.locator('input[type="text"]').first();
     const llmModelInput = page.locator('input[type="text"]').nth(1);
     
-    // Capture values BEFORE making any changes
+    // Get values from API (after beforeEach reset)
     const currentUrl = await llmBaseUrlInput.inputValue();
     const currentModel = await llmModelInput.inputValue();
     
-    // Modify settings with completely new values
+    // Modify settings with new values
     await llmBaseUrlInput.fill('https://reset-test.url.com');
     await llmModelInput.fill('reset-test-model');
     
