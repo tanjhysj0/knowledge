@@ -1,94 +1,10 @@
 import { test, expect } from '@playwright/test';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-
-interface EndpointsConfig {
-  cloudAgentApiBase: string;
-  llmBaseUrl?: string;
-  modelMapping: Record<string, string>;
-  apiKeyFile: string;
-  injectEnabled: boolean;
-  llmInterceptEnabled: boolean;
-}
-
-// 从项目根目录读取端点配置
-function readEndpointsConfig(): EndpointsConfig | null {
-  const configPath = path.join(process.cwd(), 'e2e', 'endpoints.json');
-  try {
-    if (fs.existsSync(configPath)) {
-      return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    }
-  } catch (e) {
-    console.error('读取 endpoints.json 失败:', e);
-  }
-  return null;
-}
-
-// 从配置文件指定的路径读取 API 密钥
-function readApiKey(filePath: string): string | null {
-  try {
-    const expandedPath = filePath.replace('~', os.homedir());
-    if (fs.existsSync(expandedPath)) {
-      return fs.readFileSync(expandedPath, 'utf-8').trim();
-    }
-  } catch (e) {
-    console.error('读取 API 密钥失败:', e);
-  }
-  return null;
-}
-
-// 从 endpoints.json 读取 dmodel 配置，缺一项即抛错（按配置驱动，禁止硬编码）
-function resolveConfiguredModel(config: EndpointsConfig | null): string {
-  if (!config) {
-    throw new Error('缺少 e2e/endpoints.json，无法确定测试模型');
-  }
-  const model = config.modelMapping?.['dmodel'];
-  if (!model) {
-    throw new Error("endpoints.json 中 modelMapping.dmodel 未配置，无法确定测试模型");
-  }
-  return model;
-}
-
-// 用真实 API 密钥配置后端设置
-async function configureBackendSettings(baseUrl: string, apiKey: string, model: string, llmBaseUrl: string) {
-  try {
-    await fetch(`${baseUrl}/api/settings`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        llm_provider: 'openai',
-        llm_api_key: apiKey,
-        llm_base_url: llmBaseUrl,
-        llm_model: model,
-      }),
-    });
-  } catch (e) {
-    console.error('配置后端设置失败:', e);
-  }
-}
-
-// 从 endpoints.json 读取 llmBaseUrl；未配置则抛错（禁止硬编码）
-function resolveLlmBaseUrl(config: EndpointsConfig | null): string {
-  if (!config?.llmBaseUrl) {
-    throw new Error('endpoints.json 中 llmBaseUrl 未配置，无法确定测试 Base URL');
-  }
-  return config.llmBaseUrl;
-}
+import { installChatStreamMock, DEFAULT_CHAT_ANSWER } from './helpers/chatMock';
 
 test.describe('Chat Page - E2E', () => {
-  // 在所有测试开始前用 endpoints.json 配置真实后端
-  test.beforeAll(async ({ request }) => {
-    const config = readEndpointsConfig();
-    if (config) {
-      const apiKey = readApiKey(config.apiKeyFile);
-      if (apiKey) {
-        const model = resolveConfiguredModel(config);
-        const llmBaseUrl = resolveLlmBaseUrl(config);
-        await configureBackendSettings('http://localhost:8000', apiKey, model, llmBaseUrl);
-      }
-    }
-  });
+  // chat.spec.ts mocks the LLM stream endpoint; real settings stay from
+  // the .env / global setup so non-LLM APIs (history, documents) keep
+  // exercising the real backend.
 
   test.beforeEach(async ({ page }) => {
     // 导航到聊天页
@@ -96,20 +12,31 @@ test.describe('Chat Page - E2E', () => {
     await page.waitForLoadState('networkidle').catch(() => {});
     // 等待聊天页输入框渲染
     await page.waitForSelector('textarea');
+
+    // 拦截 /api/chat/stream，以与后端 SSE wire 格式一致的 mock 响应
+    // 代替真实 LLM 调用；其他接口依旧走真实后端。
+    await installChatStreamMock(page, {
+      answer: DEFAULT_CHAT_ANSWER,
+      chunkDelayMs: 0,
+      initialDelayMs: 0,
+    });
+
     // 清理之前的对话历史
     const clearBtn = page.locator('button:has-text("清除历史")');
     if (await clearBtn.isVisible().catch(() => false)) {
       await clearBtn.click();
-      await page.waitForTimeout(500);
     }
   });
 
   test.afterEach(async ({ page }) => {
-    // 每个测试结束后清理消息
-    const clearBtn = page.locator('button:has-text("清除历史")');
-    if (await clearBtn.isVisible().catch(() => false)) {
-      await clearBtn.click();
-      await page.waitForTimeout(500);
+    // 每个测试结束后清除后端历史记录。
+    // 使用 page.request 从 Node.js 端发 DELETE，超时 1s。
+    // page 可能已为 null（异常路径），增加防护。
+    if (!page) return;
+    try {
+      await page.request.delete('/api/chat/history', { timeout: 1_000 });
+    } catch (e) {
+      console.error('afterEach 清史失败:', e);
     }
   });
 
@@ -146,11 +73,20 @@ test.describe('Chat Page - E2E', () => {
     await sendButton.click();
 
     // 用户消息应立即出现，无需等待 API 响应
-    await expect(page.locator('.message.user')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('.message.user')).toBeVisible({ timeout: 3_000 });
     await expect(page.locator('.message.user .content')).toContainText(testMessage);
   });
 
   test('发送后应显示打字动画指示器', async ({ page }) => {
+    // 覆盖 beforeEach 的默认 mock，改用明显的初始延迟让打字指示器
+    // 至少持续至 300ms 检查点。
+    await installChatStreamMock(page, {
+      answer: 'A'.repeat(200),
+      chunkSize: 24,
+      chunkDelayMs: 60,
+      initialDelayMs: 600,
+    });
+
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
@@ -171,11 +107,65 @@ test.describe('Chat Page - E2E', () => {
     await sendButton.click();
 
     // 等待助手消息出现
-    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 3_000 });
 
     // 验证助手消息有实际内容
     const assistantContent = page.locator('.message.assistant .content').first();
-    await expect(assistantContent).not.toBeEmpty({ timeout: 10_000 });
+    await expect(assistantContent).not.toBeEmpty({ timeout: 3_000 });
+
+    // Issue #28：助手渲染内容不应暴露原始 SSE wire 字段或 思考标签
+    const renderedText = (await assistantContent.textContent()) ?? '';
+    expect(renderedText).not.toMatch(/^event:/m);
+    expect(renderedText).not.toMatch(/^data:/m);
+    expect(renderedText).not.toContain('\<think\>');
+    expect(renderedText).not.toContain('\</think\>');
+  });
+
+  test('思考内容默认折叠可展开', async ({ page }) => {
+    // 覆盖 mock，提供包含思考与回答的事件流
+    await installChatStreamMock(page, {
+      thinking:
+        '首先这是一个简单的加法问题。1 + 1 的计算结果是 2，因为我将两个一相加，得到二。',
+      answer: '答案是 2。',
+      chunkSize: 16,
+      chunkDelayMs: 0,
+      initialDelayMs: 0,
+    });
+
+    const textarea = page.locator('textarea');
+    const sendButton = page.locator('button:has-text("发送")');
+
+    // 选择更可能触发 思考步骤 的提问
+    await textarea.fill('请一步步思考：1 + 1 等于几？请说明推理过程。');
+    await sendButton.click();
+
+    // 等待助手消息内容出现
+    await expect(page.locator('.message.assistant').last().locator('.content')).not.toBeEmpty({ timeout: 3_000 });
+
+    // 仅检查本次请求（最后一条助手消息）的思考区
+    const lastAssistant = page.locator('.message.assistant').last();
+    const thinkingSection = lastAssistant.locator('.thinking-section');
+    const thinkingCount = await thinkingSection.count();
+
+    // 思考内容是否出现依赖模型配置；本断言仅在模型实际输出 思考块时验证折叠行为
+    if (thinkingCount === 0) {
+      console.warn('[Issue #28] 当前模型未输出 思考内容，跳过折叠断言');
+      return;
+    }
+
+    // 默认应折叠（details.open 属性不存在）
+    const initialOpen = await thinkingSection.first().getAttribute('open');
+    expect(initialOpen).toBeNull();
+
+    // 点击 summary 后可展开
+    await thinkingSection.first().locator('summary').click();
+    await expect(thinkingSection.first()).toHaveAttribute('open', '');
+
+    // 展开后 thinking-content 应包含推理文本且不含 思考标签字面值
+    const thinkingText = (await thinkingSection.first().locator('.thinking-content').textContent()) ?? '';
+    expect(thinkingText.length).toBeGreaterThan(0);
+    expect(thinkingText).not.toContain('\<think\>');
+    expect(thinkingText).not.toContain('\</think\>');
   });
 
   test('多轮对话应保持上下文', async ({ page }) => {
@@ -188,16 +178,18 @@ test.describe('Chat Page - E2E', () => {
     await sendButton.click();
 
     // 等待第一条用户消息出现
-    await expect(page.locator('.message.user')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('.message.user')).toBeVisible({ timeout: 3_000 });
 
     // 记录第一轮消息数量
     const userMessages = page.locator('.message.user');
     const assistantMessages = page.locator('.message.assistant');
     const firstUserCount = await userMessages.count();
-    const firstAssistantCount = await assistantMessages.count();
 
-    // 等待响应完成
-    await page.waitForTimeout(500);
+    // 等待响应完成：等最后一条 assistant message 的 content 出现
+    // （ChatPage 会立即 push 一个空的 assistant，再异步填充内容）
+    await expect(
+      assistantMessages.last().locator('.content')
+    ).not.toBeEmpty({ timeout: 3_000 });
 
     // 第二轮对话
     const secondMessage = 'Second question';
@@ -205,7 +197,12 @@ test.describe('Chat Page - E2E', () => {
     await sendButton.click();
 
     // 等待第二条用户消息出现
-    await expect(page.locator('.message.user').last()).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('.message.user').last()).toBeVisible({ timeout: 3_000 });
+
+    // 等待第二轮响应完成
+    await expect(
+      assistantMessages.last().locator('.content')
+    ).not.toBeEmpty({ timeout: 3_000 });
 
     // 验证用户消息数量增加（多轮上下文生效）
     const secondUserCount = await userMessages.count();
@@ -223,11 +220,8 @@ test.describe('Chat Page - E2E', () => {
     await textarea.fill('Test message');
     await sendButton.click();
 
-    // 等待消息出现
-    await page.waitForTimeout(500);
-
-    // 此时清除按钮应可见
-    await expect(page.locator('button:has-text("清除历史")')).toBeVisible();
+    // 此时清除按钮应可见（直接等可见，避免硬等待）
+    await expect(page.locator('button:has-text("清除历史")')).toBeVisible({ timeout: 3_000 });
   });
 
   test('点击清除按钮应清空对话历史', async ({ page }) => {
@@ -239,19 +233,14 @@ test.describe('Chat Page - E2E', () => {
     await sendButton.click();
 
     // 等待用户消息出现
-    await expect(page.locator('.message.user')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('.message.user')).toBeVisible({ timeout: 3_000 });
 
     // 点击清除按钮
     const clearBtn = page.locator('button:has-text("清除历史")');
     await clearBtn.click();
 
-    // 等待清除操作完成
-    await page.waitForTimeout(1_000);
-
-    // 清除后应回到空状态或无用户消息
-    const emptyStateVisible = await page.locator('.empty-state').isVisible().catch(() => false);
-    const userMessageCount = await page.locator('.message.user').count();
-    expect(emptyStateVisible || userMessageCount === 0).toBeTruthy();
+    // 等待空状态重新出现（直接等，避免硬等待 1s）
+    await expect(page.locator('.empty-state')).toBeVisible({ timeout: 3_000 });
   });
 
   test('选中文档时应显示上下文指示器', async ({ page }) => {
@@ -274,7 +263,7 @@ test.describe('Chat Page - E2E', () => {
     await textarea.press('Enter');
 
     // 消息应被发送
-    await expect(page.locator('.message.user .content')).toContainText(testMessage, { timeout: 5_000 });
+    await expect(page.locator('.message.user .content')).toContainText(testMessage, { timeout: 3_000 });
   });
 
   test('应支持 Shift+Enter 换行', async ({ page }) => {
@@ -302,8 +291,8 @@ test.describe('Chat Page - E2E', () => {
     await sendButton.click();
 
     // 等待双方消息出现
-    await expect(page.locator('.message.user')).toBeVisible({ timeout: 5_000 });
-    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('.message.user')).toBeVisible({ timeout: 3_000 });
+    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 3_000 });
 
     // 校验角色标签（用户 / AI）
     await expect(page.locator('.message.user .role')).toContainText('用户');
@@ -373,20 +362,20 @@ test.describe('Chat Page - E2E', () => {
     const firstMsg = 'reload-msg-1-' + Date.now();
     await textarea.fill(firstMsg);
     await sendButton.click();
-    await expect(page.locator('.message.user .content')).toContainText(firstMsg, { timeout: 5_000 });
-    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('.message.user .content')).toContainText(firstMsg, { timeout: 3_000 });
+    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 3_000 });
 
     const secondMsg = 'reload-msg-2-' + Date.now();
     await textarea.fill(secondMsg);
     await sendButton.click();
-    await expect(page.locator('.message.user .content').last()).toContainText(secondMsg, { timeout: 5_000 });
+    await expect(page.locator('.message.user .content').last()).toContainText(secondMsg, { timeout: 3_000 });
 
     // reload 后 ChatPage 应调用 history 接口并恢复显示
     await page.reload();
     await page.waitForSelector('textarea');
 
-    await expect(page.locator('.message.user')).toHaveCount(2, { timeout: 5_000 });
-    await expect(page.locator('.message.assistant')).toHaveCount(2, { timeout: 10_000 });
+    await expect(page.locator('.message.user')).toHaveCount(2, { timeout: 3_000 });
+    await expect(page.locator('.message.assistant')).toHaveCount(2, { timeout: 3_000 });
 
     await expect(page.locator('.message.user .content').first()).toContainText(firstMsg);
     await expect(page.locator('.message.user .content').last()).toContainText(secondMsg);

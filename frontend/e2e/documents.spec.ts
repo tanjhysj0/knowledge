@@ -53,7 +53,7 @@ cleanupTest.describe('Documents Page - E2E', () => {
 
   cleanupTest('存在分页时应能跳转下一页', async ({ page }) => {
     // 等待分页器出现
-    await page.waitForSelector('.pagination', { state: 'visible', timeout: 10_000 }).catch(() => {});
+    await page.waitForSelector('.pagination', { state: 'visible', timeout: 5_000 }).catch(() => {});
 
     const hasPagination = await page.locator('.pagination').isVisible().catch(() => false);
 
@@ -66,7 +66,9 @@ cleanupTest.describe('Documents Page - E2E', () => {
         const pageInfoBefore = await page.locator('.pagination-info').textContent().catch(() => '');
 
         await nextButton.click();
-        await page.waitForLoadState('networkidle').catch(() => {});
+
+        // 等待页码文本变化（比 networkidle 更精确，避免 race condition）
+        await expect(page.locator('.pagination-info')).not.toHaveText(pageInfoBefore ?? '', { timeout: 5_000 });
 
         // 翻页后页码应发生变化
         const pageInfoAfter = await page.locator('.pagination-info').textContent().catch(() => '');
@@ -76,7 +78,7 @@ cleanupTest.describe('Documents Page - E2E', () => {
   });
 
   cleanupTest('应能从分页跳转上一页', async ({ page }) => {
-    await page.waitForSelector('.pagination', { state: 'visible', timeout: 10_000 }).catch(() => {});
+    await page.waitForSelector('.pagination', { state: 'visible', timeout: 5_000 }).catch(() => {});
 
     const hasPagination = await page.locator('.pagination').isVisible().catch(() => false);
 
@@ -87,7 +89,10 @@ cleanupTest.describe('Documents Page - E2E', () => {
       if (!isDisabled) {
         const pageInfoBefore = await page.locator('.pagination-info').textContent().catch(() => '');
         await prevButton.click();
-        await page.waitForLoadState('networkidle').catch(() => {});
+
+        // 等待页码文本变化（避免 race condition）
+        await expect(page.locator('.pagination-info')).not.toHaveText(pageInfoBefore ?? '', { timeout: 5_000 });
+
         const pageInfoAfter = await page.locator('.pagination-info').textContent().catch(() => '');
         expect(pageInfoAfter).not.toBe(pageInfoBefore);
       }
@@ -146,7 +151,7 @@ cleanupTest.describe('Documents Page - E2E', () => {
     });
 
     // 前端列表应出现该文档
-    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 5_000 });
     await expect(page.locator(`.doc-item:has-text("${filename}") .doc-item-meta`)).toBeVisible();
 
     // 后端应保存文档，且分块数 > 0
@@ -170,7 +175,7 @@ cleanupTest.describe('Documents Page - E2E', () => {
       buffer: Buffer.from(testContent),
     });
 
-    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 5_000 });
 
     // 校验大小与分块数
     const uploadedDoc = (await listDocumentsViaApi()).find(d => d.filename === filename);
@@ -200,7 +205,7 @@ Content for section 2.
       buffer: Buffer.from(mdContent),
     });
 
-    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 5_000 });
 
     const uploadedDoc = (await listDocumentsViaApi()).find(d => d.filename === filename);
     expect(uploadedDoc).toBeDefined();
@@ -218,7 +223,7 @@ Content for section 2.
       buffer: Buffer.from('Document to be deleted: ' + Date.now()),
     });
 
-    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 5_000 });
 
     const beforeDocs = await listDocumentsViaApi();
     const targetDoc = beforeDocs.find(d => d.filename === filename);
@@ -231,7 +236,7 @@ Content for section 2.
     await docItem.locator('button:has-text("删除")').click();
 
     // 前端列表中该文档应消失
-    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toHaveCount(0, { timeout: 10_000 });
+    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toHaveCount(0, { timeout: 5_000 });
 
     // 后端也应同步删除，总数减 1
     const afterDocs = await listDocumentsViaApi();
@@ -250,7 +255,7 @@ Content for section 2.
       buffer: Buffer.from('will be deleted twice'),
     });
 
-    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 5_000 });
 
     const targetDoc = (await listDocumentsViaApi()).find(d => d.filename === filename);
     expect(targetDoc).toBeDefined();
@@ -313,12 +318,13 @@ Content for section 2.
     const hasPagination = await page.locator('.pagination').isVisible().catch(() => false);
 
     if (hasPagination) {
-      let nextButton = page.locator('button:has-text("下一页")');
-      // 持续点击下一页直到按钮被禁用
-      while (!(await nextButton.isDisabled().catch(() => false))) {
+      const nextButton = page.locator('button:has-text("下一页")');
+      // 一次性点到底。每次点击后等待页码文本变化，避免 race condition。
+      for (let i = 0; i < 20; i++) {
+        if (await nextButton.isDisabled().catch(() => false)) break;
+        const pageInfoBefore = await page.locator('.pagination-info').textContent().catch(() => '');
         await nextButton.click();
-        await page.waitForTimeout(500);
-        nextButton = page.locator('button:has-text("下一页")');
+        await expect(page.locator('.pagination-info')).not.toHaveText(pageInfoBefore ?? '', { timeout: 3_000 });
       }
 
       const isDisabled = await nextButton.isDisabled().catch(() => false);

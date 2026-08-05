@@ -27,20 +27,23 @@ const projects = process.env.E2E_ALL_BROWSERS
 
 export default defineConfig({
   testDir: './e2e',
+  // 测试并行执行。状态隔离由各 spec 的 beforeEach / afterEach 负责（清 history、清文档、复原 settings）。
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: 1, // Run tests serially to avoid state pollution
+  // 并行 worker 数：默认上限 4（CI 下限为 2）。可以 E2E_WORKERS=N 环境变量覆盖。
+  workers: Number(process.env.E2E_WORKERS) || (process.env.CI ? 2 : 4),
   reporter: 'list',
   use: {
     baseURL: 'http://127.0.0.1:5173',
     trace: 'on-first-retry',
-    // 单个请求超时 5 秒
+    // 单个请求超时 5 秒（保留宽松值，防止 vite 冷启动误杀 click/fill）
     actionTimeout: 5_000,
     navigationTimeout: 5_000,
   },
-  // 单个测试超时 10 秒
-  timeout: 10_000,
+  // 单个测试用例超时 5 秒（mock 后所有请求都应很快完成；--timeout CLI 可覆盖）
+  timeout: 5_000,
+  // 期望串行执行的测试通过 test.describe.configure({ mode: 'serial' }) 启用。
   projects,
   webServer: {
     command: 'npm run dev',

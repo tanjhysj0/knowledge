@@ -36,6 +36,7 @@ function resolveConfiguredLlmBaseUrl(): string {
   return baseUrl;
 }
 
+cleanupTest.describe.configure({ mode: 'serial' });
 cleanupTest.describe('Settings Page - True E2E', () => {
   cleanupTest.beforeEach(async ({ page, settingsGuard }) => {
     // 进入设置页
@@ -49,7 +50,7 @@ cleanupTest.describe('Settings Page - True E2E', () => {
     if (currentValue !== configuredModel) {
       await llmModelInput.fill(configuredModel);
       await page.locator('button:has-text("保存配置")').click();
-      await page.waitForResponse('**/api/settings', { timeout: 10_000 }).catch(() => {});
+      await page.waitForResponse('**/api/settings', { timeout: 5_000 }).catch(() => {});
       await page.reload();
       await page.waitForSelector('input[type="text"]');
     }
@@ -100,7 +101,7 @@ cleanupTest.describe('Settings Page - True E2E', () => {
 
     // 保存并断言成功提示
     await page.locator('button:has-text("保存配置")').click();
-    await expect(page.locator('text=配置已保存并生效')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('text=配置已保存并生效')).toBeVisible({ timeout: 5_000 });
 
     // 刷新后 Provider 应保持新值
     await page.reload();
@@ -143,7 +144,7 @@ cleanupTest.describe('Settings Page - True E2E', () => {
 
     await expect(
       page.locator('text=配置已保存并生效').or(page.locator('text=保存配置失败'))
-    ).toBeVisible({ timeout: 15_000 });
+    ).toBeVisible({ timeout: 5_000 });
   });
 
   cleanupTest('点击保存时应展示错误或成功提示', async ({ page }) => {
@@ -158,7 +159,7 @@ cleanupTest.describe('Settings Page - True E2E', () => {
     // 至少出现成功或失败提示
     await expect(
       page.locator('text=保存配置失败').or(page.locator('text=配置已保存并生效'))
-    ).toBeVisible({ timeout: 15_000 });
+    ).toBeVisible({ timeout: 5_000 });
   });
 
   cleanupTest('点击重置应恢复原始配置', async ({ page }) => {
@@ -170,7 +171,7 @@ cleanupTest.describe('Settings Page - True E2E', () => {
 
     await llmModelInput.fill('known-test-model');
     await page.locator('button:has-text("保存配置")').click();
-    await page.waitForResponse('**/api/settings', { timeout: 10_000 });
+    await page.waitForResponse('**/api/settings', { timeout: 5_000 });
 
     await expect(llmModelInput).toHaveValue('known-test-model');
 
@@ -191,7 +192,7 @@ cleanupTest.describe('Settings Page - True E2E', () => {
 
     await responsePromise;
 
-    await expect(page.locator('text=LLM 配置')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('text=LLM 配置')).toBeVisible({ timeout: 5_000 });
   });
 
   cleanupTest('加载时应展示错误或设置内容', async ({ page }) => {
@@ -241,7 +242,7 @@ cleanupTest.describe('Settings Page - True E2E', () => {
     await llmModelInput.fill(newModel);
     await page.locator('button:has-text("保存配置")').click();
 
-    await page.waitForResponse('**/api/settings', { timeout: 15_000 }).catch(() => {});
+    await page.waitForResponse('**/api/settings', { timeout: 5_000 }).catch(() => {});
 
     await page.reload();
     await page.waitForSelector('input[type="text"]');
@@ -265,7 +266,7 @@ cleanupTest.describe('Settings Page - True E2E', () => {
 
     await llmProviderSelect.selectOption(differentProvider!);
     await page.locator('button:has-text("保存配置")').click();
-    await expect(page.locator('text=配置已保存并生效')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('text=配置已保存并生效')).toBeVisible({ timeout: 5_000 });
 
     // 切换到聊天页仍可正常加载
     await page.goto('/chat');
@@ -279,6 +280,6 @@ cleanupTest.describe('Settings Page - True E2E', () => {
     await page.waitForSelector('select >> nth=0');
     await page.locator('select').first().selectOption(originalProvider);
     await page.locator('button:has-text("保存配置")').click();
-    await expect(page.locator('text=配置已保存并生效')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('text=配置已保存并生效')).toBeVisible({ timeout: 5_000 });
   });
 });

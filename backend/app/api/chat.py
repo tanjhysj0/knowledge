@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.models.document import ChatMessage
 from app.models.schemas import ChatRequest, ChatMessageResponse, ChatResponse
 from app.services.rag import RAGService
+from app.services.think_splitter import ThinkSplitter
 
 router = APIRouter()
 
@@ -61,6 +62,7 @@ async def chat_stream(
         nonlocal user_message_id, assistant_message_id
         sources = []
         full_answer = ""
+        splitter = ThinkSplitter()
 
         try:
             history_result = await db.execute(
@@ -87,12 +89,36 @@ async def chat_stream(
             prompt = f"Question: {request.message}\n\nPlease answer this question based on your general knowledge."
             messages = context_messages + [{"role": "user", "content": prompt}]
 
-            async for chunk_data in rag_service._llm.stream_chat(messages=messages):
-                full_answer += chunk_data
-                yield {
-                    "event": "message",
-                    "data": json.dumps({"content": chunk_data}),
-                }
+            async for chunk_data in rag_service._llm().stream_chat(messages=messages):
+                for kind, segment in splitter.feed(chunk_data):
+                    if not segment:
+                        continue
+                    if kind == "thinking":
+                        yield {
+                            "event": "thinking",
+                            "data": json.dumps({"content": segment}, ensure_ascii=False),
+                        }
+                    else:
+                        full_answer += segment
+                        yield {
+                            "event": "message",
+                            "data": json.dumps({"content": segment}, ensure_ascii=False),
+                        }
+
+            for kind, segment in splitter.flush():
+                if not segment:
+                    continue
+                if kind == "thinking":
+                    yield {
+                        "event": "thinking",
+                        "data": json.dumps({"content": segment}, ensure_ascii=False),
+                    }
+                else:
+                    full_answer += segment
+                    yield {
+                        "event": "message",
+                        "data": json.dumps({"content": segment}, ensure_ascii=False),
+                    }
 
             assistant_msg = ChatMessage(
                 role="assistant",

@@ -1,12 +1,14 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { chatApi, documentApi } from '../services/api';
 import type { Document } from '../types';
+import { SSEParser } from '../utils/sseParser';
 import '../App.css';
 
 interface ChatMessage {
   id: number;
   role: string;
   content: string;
+  thinking?: string;
 }
 
 export default function ChatPage() {
@@ -15,6 +17,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [thinkingOpen, setThinkingOpen] = useState<Record<number, boolean>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -81,17 +84,54 @@ export default function ChatPage() {
       const reader = response.body?.getReader();
       if (!reader) throw new Error('无法读取响应');
 
-      let assistantContent = '';
-      const assistantMessage = { id: Date.now() + 1, role: 'assistant', content: '' };
-      setMessages((prev) => [...prev, assistantMessage]);
+      const decoder = new TextDecoder();
+      const parser = new SSEParser();
+      const assistantId = Date.now() + 1;
+      setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '' }]);
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const text = new TextDecoder().decode(value);
-        assistantContent += text;
+        const text = decoder.decode(value, { stream: true });
+        const events = parser.feed(text);
+        if (events.length > 0) {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== assistantId) return m;
+              let { content, thinking } = m;
+              for (const ev of events) {
+                const payload = ev.data as { content?: string } | null;
+                const piece = payload?.content;
+                if (typeof piece !== 'string' || piece.length === 0) continue;
+                if (ev.event === 'thinking') {
+                  thinking = (thinking || '') + piece;
+                } else if (ev.event === 'message') {
+                  content += piece;
+                } else if (ev.event === 'error') {
+                  throw new Error(payload?.content?.toString() || '模型返回错误');
+                }
+              }
+              return { ...m, content, thinking };
+            })
+          );
+        }
+      }
+
+      for (const ev of parser.end()) {
+        const payload = ev.data as { content?: string } | null;
+        const piece = payload?.content;
+        if (typeof piece !== 'string' || piece.length === 0) continue;
         setMessages((prev) =>
-          prev.map((m) => (m.id === assistantMessage.id ? { ...m, content: assistantContent } : m))
+          prev.map((m) => {
+            if (m.id !== assistantId) return m;
+            if (ev.event === 'thinking') {
+              return { ...m, thinking: (m.thinking || '') + piece };
+            }
+            if (ev.event === 'message') {
+              return { ...m, content: m.content + piece };
+            }
+            return m;
+          })
         );
       }
     } catch (err: any) {
@@ -107,6 +147,7 @@ export default function ChatPage() {
     try {
       await chatApi.clear();
       setMessages([]);
+      setThinkingOpen({});
     } catch (err) {
       console.error('Clear failed:', err);
     }
@@ -141,12 +182,17 @@ export default function ChatPage() {
         {messages.map((msg) => (
           <div key={msg.id} className={`message ${msg.role}`}>
             <div className="role">{msg.role === 'user' ? '用户' : 'AI'}</div>
-            <div className="content">
-              {msg.content}
-              {msg.role === 'assistant' && msg.content === messages.find(m => m.id === msg.id)?.content && isLoading && msg.id === messages[messages.length - 1]?.id && (
-                <span className="typing-cursor">|</span>
-              )}
-            </div>
+            {msg.role === 'assistant' && msg.thinking && msg.thinking.trim().length > 0 && (
+              <details
+                className="thinking-section"
+                open={!!thinkingOpen[msg.id]}
+                onToggle={(e) => setThinkingOpen((prev) => ({ ...prev, [msg.id]: (e.target as HTMLDetailsElement).open }))}
+              >
+                <summary className="thinking-summary">思考过程</summary>
+                <div className="thinking-content">{msg.thinking}</div>
+              </details>
+            )}
+            <div className="content">{msg.content}</div>
           </div>
         ))}
 
