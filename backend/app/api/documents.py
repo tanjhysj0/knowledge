@@ -9,6 +9,10 @@ from app.core.database import get_db
 from app.models.document import Document
 from app.models.schemas import DocumentResponse
 from app.core.config import get_settings
+from app.services.parser import DocumentParser
+from app.services.chunker import TextChunker
+from app.services.embedding import EmbeddingService
+from app.services.vector_store import VectorStoreService
 
 router = APIRouter()
 settings = get_settings()
@@ -34,16 +38,50 @@ async def upload_document(
         content = await file.read()
         await f.write(content)
 
+    # Parse document content
+    try:
+        text_content = DocumentParser.parse(file_path, file_ext)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse document: {str(e)}")
+
+    if not text_content or not text_content.strip():
+        raise HTTPException(status_code=400, detail="Document is empty or contains no extractable text")
+
+    # Chunk text
+    chunker = TextChunker(chunk_size=settings.chunk_size, overlap=settings.chunk_overlap)
+    chunks = chunker.chunk(text_content)
+
+    if not chunks:
+        raise HTTPException(status_code=400, detail="Failed to chunk document content")
+
+    # Create document record first
     document = Document(
         filename=file.filename,
         file_path=file_path,
         file_type=file_ext,
         size=len(content),
-        chunk_count=0,
+        chunk_count=len(chunks),
     )
     db.add(document)
     await db.commit()
     await db.refresh(document)
+
+    # Generate embeddings and store in Milvus
+    try:
+        embedding_service = EmbeddingService()
+        embeddings = await embedding_service.embed_texts(chunks)
+
+        vector_store = VectorStoreService()
+        vector_store.insert(
+            document_id=document.id,
+            chunks=chunks,
+            embeddings=embeddings,
+        )
+    except Exception as e:
+        # Rollback document if vector storage fails
+        await db.delete(document)
+        await db.commit()
+        raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
 
     return document
 
@@ -65,6 +103,13 @@ async def delete_document(
 
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    # Delete from Milvus first
+    try:
+        vector_store = VectorStoreService()
+        vector_store.delete_by_document_id(document_id)
+    except Exception:
+        pass  # Continue with file and DB deletion even if Milvus fails
 
     if os.path.exists(document.file_path):
         os.remove(document.file_path)

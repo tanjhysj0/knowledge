@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     upload_dir: str = "./uploads"
     max_file_size: int = 10 * 1024 * 1024  # 10MB
 
+    # Document Processing
+    chunk_size: int = 500
+    chunk_overlap: int = 50
+
     @property
     def database_url(self) -> str:
         return f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
