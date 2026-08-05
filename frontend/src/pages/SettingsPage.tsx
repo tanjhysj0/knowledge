@@ -68,7 +68,7 @@ function ProviderConfig({
             type="text"
             value={baseUrl}
             onChange={(e) => onBaseUrlChange(e.target.value)}
-            placeholder="https://api.openai.com/v1"
+            placeholder=""
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
@@ -79,7 +79,7 @@ function ProviderConfig({
             type="text"
             value={model}
             onChange={(e) => onModelChange(e.target.value)}
-            placeholder="gpt-4o-mini"
+            placeholder=""
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
         </div>

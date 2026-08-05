@@ -1,5 +1,40 @@
 import { test, expect } from '@playwright/test';
+import * as fs from 'fs';
+import * as path from 'path';
 import { test as cleanupTest } from './helpers/cleanup';
+
+interface EndpointsConfig {
+  llmBaseUrl?: string;
+  modelMapping: Record<string, string>;
+}
+
+// 从 e2e/endpoints.json 读取测试用的目标模型；未配置则抛错（禁止硬编码）
+function resolveConfiguredModel(): string {
+  const configPath = path.join(process.cwd(), 'e2e', 'endpoints.json');
+  if (!fs.existsSync(configPath)) {
+    throw new Error('缺少 e2e/endpoints.json，无法确定测试模型');
+  }
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as EndpointsConfig;
+  const model = config?.modelMapping?.['dmodel'];
+  if (!model) {
+    throw new Error('endpoints.json 中 modelMapping.dmodel 未配置，无法确定测试模型');
+  }
+  return model;
+}
+
+// 从 e2e/endpoints.json 读取测试用的 LLM Base URL；未配置则抛错（禁止硬编码）
+function resolveConfiguredLlmBaseUrl(): string {
+  const configPath = path.join(process.cwd(), 'e2e', 'endpoints.json');
+  if (!fs.existsSync(configPath)) {
+    throw new Error('缺少 e2e/endpoints.json，无法确定测试 Base URL');
+  }
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as EndpointsConfig;
+  const baseUrl = config?.llmBaseUrl;
+  if (!baseUrl) {
+    throw new Error('endpoints.json 中 llmBaseUrl 未配置，无法确定测试 Base URL');
+  }
+  return baseUrl;
+}
 
 cleanupTest.describe('Settings Page - True E2E', () => {
   cleanupTest.beforeEach(async ({ page, settingsGuard }) => {
@@ -7,11 +42,12 @@ cleanupTest.describe('Settings Page - True E2E', () => {
     await page.goto('/settings');
     await page.waitForSelector('input[type="text"]');
 
-    // 将模型统一重置为 gpt-4o-mini，保证测试一致性
+    // 将模型统一重置为 endpoints.json 中配置的 dmodel，保证测试一致性
+    const configuredModel = resolveConfiguredModel();
     const llmModelInput = page.locator('input[type="text"]').nth(1);
     const currentValue = await llmModelInput.inputValue();
-    if (currentValue !== 'gpt-4o-mini') {
-      await llmModelInput.fill('gpt-4o-mini');
+    if (currentValue !== configuredModel) {
+      await llmModelInput.fill(configuredModel);
       await page.locator('button:has-text("保存配置")').click();
       await page.waitForResponse('**/api/settings', { timeout: 10_000 }).catch(() => {});
       await page.reload();
@@ -79,7 +115,8 @@ cleanupTest.describe('Settings Page - True E2E', () => {
     // 修改 Base URL（避免重复设置同一值）
     const llmBaseUrlInput = page.locator('input[type="text"]').first();
     const originalUrl = await llmBaseUrlInput.inputValue();
-    const modifiedUrl = originalUrl.includes('test') ? 'https://api.openai.com/v1' : 'https://test.api.com/v1';
+    const configuredBaseUrl = resolveConfiguredLlmBaseUrl();
+    const modifiedUrl = originalUrl.includes('test') ? configuredBaseUrl : `${configuredBaseUrl}-test`;
 
     await llmBaseUrlInput.fill(modifiedUrl);
     await expect(llmBaseUrlInput).toHaveValue(modifiedUrl);
@@ -87,7 +124,8 @@ cleanupTest.describe('Settings Page - True E2E', () => {
     // 修改 Model
     const llmModelInput = page.locator('input[type="text"]').nth(1);
     const originalModel = await llmModelInput.inputValue();
-    const modifiedModel = originalModel.includes('test') ? 'gpt-4o-mini' : 'gpt-4o-test';
+    const configuredModel = resolveConfiguredModel();
+    const modifiedModel = originalModel.includes('test') ? configuredModel : `${configuredModel}-test`;
 
     await llmModelInput.fill(modifiedModel);
     await expect(llmModelInput).toHaveValue(modifiedModel);

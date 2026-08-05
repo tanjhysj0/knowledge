@@ -8,16 +8,16 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = ""
-    openai_base_url: str = "https://api.openai.com/v1"
-    openai_model: str = "gpt-4o-mini"
+    openai_base_url: str = ""
+    openai_model: str = ""
 
     # Anthropic
     anthropic_api_key: str = ""
-    anthropic_base_url: str = "https://api.anthropic.com"
-    anthropic_model: str = "claude-3-5-sonnet-20241022"
+    anthropic_base_url: str = ""
+    anthropic_model: str = ""
 
     # Shared model settings (deprecated, use provider-specific models)
-    llm_model: str = "gpt-4o-mini"
+    llm_model: str = ""
 
     # Milvus
     milvus_host: str = "localhost"

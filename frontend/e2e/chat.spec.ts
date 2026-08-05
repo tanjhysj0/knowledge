@@ -5,6 +5,7 @@ import * as os from 'os';
 
 interface EndpointsConfig {
   cloudAgentApiBase: string;
+  llmBaseUrl?: string;
   modelMapping: Record<string, string>;
   apiKeyFile: string;
   injectEnabled: boolean;
@@ -37,8 +38,20 @@ function readApiKey(filePath: string): string | null {
   return null;
 }
 
+// 从 endpoints.json 读取 dmodel 配置，缺一项即抛错（按配置驱动，禁止硬编码）
+function resolveConfiguredModel(config: EndpointsConfig | null): string {
+  if (!config) {
+    throw new Error('缺少 e2e/endpoints.json，无法确定测试模型');
+  }
+  const model = config.modelMapping?.['dmodel'];
+  if (!model) {
+    throw new Error("endpoints.json 中 modelMapping.dmodel 未配置，无法确定测试模型");
+  }
+  return model;
+}
+
 // 用真实 API 密钥配置后端设置
-async function configureBackendSettings(baseUrl: string, apiKey: string, model: string) {
+async function configureBackendSettings(baseUrl: string, apiKey: string, model: string, llmBaseUrl: string) {
   try {
     await fetch(`${baseUrl}/api/settings`, {
       method: 'PUT',
@@ -46,7 +59,7 @@ async function configureBackendSettings(baseUrl: string, apiKey: string, model: 
       body: JSON.stringify({
         llm_provider: 'openai',
         llm_api_key: apiKey,
-        llm_base_url: 'https://api.minimaxi.com/v1',
+        llm_base_url: llmBaseUrl,
         llm_model: model,
       }),
     });
@@ -55,15 +68,24 @@ async function configureBackendSettings(baseUrl: string, apiKey: string, model: 
   }
 }
 
+// 从 endpoints.json 读取 llmBaseUrl；未配置则抛错（禁止硬编码）
+function resolveLlmBaseUrl(config: EndpointsConfig | null): string {
+  if (!config?.llmBaseUrl) {
+    throw new Error('endpoints.json 中 llmBaseUrl 未配置，无法确定测试 Base URL');
+  }
+  return config.llmBaseUrl;
+}
+
 test.describe('Chat Page - E2E', () => {
   // 在所有测试开始前用 endpoints.json 配置真实后端
   test.beforeAll(async ({ request }) => {
     const config = readEndpointsConfig();
     if (config) {
       const apiKey = readApiKey(config.apiKeyFile);
-      const model = config.modelMapping['dmodel'] || 'MiniMax-M3';
       if (apiKey) {
-        await configureBackendSettings('http://localhost:8000', apiKey, model);
+        const model = resolveConfiguredModel(config);
+        const llmBaseUrl = resolveLlmBaseUrl(config);
+        await configureBackendSettings('http://localhost:8000', apiKey, model, llmBaseUrl);
       }
     }
   });

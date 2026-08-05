@@ -1,5 +1,6 @@
 {
   "cloudAgentApiBase": "https://api.minimaxi.com/anthropic/v1/messages",
+  "llmBaseUrl": "https://api.minimaxi.com/v1",
   "modelMapping": {
     "dmodel": "MiniMax-M2.7-highspeed"
   },
