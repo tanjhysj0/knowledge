@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { chatApi } from '../services/api';
+import { chatApi, documentApi } from '../services/api';
 import type { Document } from '../types';
 import '../App.css';
 
@@ -9,17 +9,29 @@ interface ChatMessage {
   content: string;
 }
 
-interface ChatPageProps {
-  documents: Document[];
-}
-
-export default function ChatPage({ documents }: ChatPageProps) {
+export default function ChatPage() {
+  const [documents, setDocuments] = useState<Document[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load available documents on mount so users can see which docs are queryable
+  useEffect(() => {
+    let cancelled = false;
+    documentApi.list(1, 100)
+      .then((res) => {
+        if (!cancelled) setDocuments(res.items);
+      })
+      .catch((err) => {
+        console.error('Failed to load documents for chat context:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

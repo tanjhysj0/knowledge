@@ -190,4 +190,37 @@ test.describe('Settings Page - True E2E', () => {
     const currentModel = await llmModelInput.inputValue();
     expect([originalModel, newModel]).toContain(currentModel);
   });
+
+  test('should keep ChatPage functional after provider switch (end-to-end persistence)', async ({ page }) => {
+    // Capture original provider
+    await page.waitForSelector('select >> nth=0');
+    const llmProviderSelect = page.locator('select').first();
+    const originalProvider = await llmProviderSelect.inputValue();
+
+    // Switch provider (toggle between openai and anthropic)
+    const options = await llmProviderSelect.locator('option').evaluateAll(
+      (els) => els.map((el) => (el as HTMLOptionElement).value)
+    );
+    const differentProvider = options.find((val) => val !== originalProvider);
+    expect(differentProvider).toBeDefined();
+
+    await llmProviderSelect.selectOption(differentProvider!);
+    await page.locator('button:has-text("保存配置")').click();
+    await expect(page.locator('text=配置已保存并生效')).toBeVisible({ timeout: 15000 });
+
+    // Navigate to chat page
+    await page.goto('/chat');
+    await page.waitForSelector('textarea');
+
+    // ChatPage should still load successfully regardless of which provider is selected
+    await expect(page.locator('textarea')).toBeVisible();
+    await expect(page.locator('button:has-text("发送")')).toBeVisible();
+
+    // Restore original provider
+    await page.goto('/settings');
+    await page.waitForSelector('select >> nth=0');
+    await page.locator('select').first().selectOption(originalProvider);
+    await page.locator('button:has-text("保存配置")').click();
+    await expect(page.locator('text=配置已保存并生效')).toBeVisible({ timeout: 15000 });
+  });
 });

@@ -15,7 +15,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/documents" element={<DocumentsPage />} />
-          <Route path="/chat" element={<ChatPage documents={[]} />} />
+          <Route path="/chat" element={<ChatPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </Layout>
