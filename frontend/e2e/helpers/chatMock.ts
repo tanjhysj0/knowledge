@@ -35,6 +35,17 @@ export interface ChatMockOptions {
   /** If set, the mock returns a non-200 status with this JSON payload. */
   failureStatus?: number;
   failureBody?: unknown;
+  /**
+   * Per-request answer overrides keyed by the presence of `document_ids`.
+   * When the request body contains at least one document id, `withDocs` is used;
+   * otherwise `withoutDocs` is used. If a key is absent, `answer` is the fallback.
+   * Useful for verifying that the frontend forwards the right document_ids to
+   * the backend (e.g. Issue #25 cross-page RAG tracer bullet).
+   */
+  answersByDocs?: {
+    withDocs?: string;
+    withoutDocs?: string;
+  };
 }
 
 export const DEFAULT_CHAT_ANSWER =
@@ -117,6 +128,9 @@ async function handleChatStream(
     return;
   }
 
+  // Pick the answer based on document_ids forwarded by the frontend.
+  const answer = pickAnswerByDocumentIds(route, opts);
+
   // Build the full SSE response into a single buffer; the browser's SSE parser
   // understands the \n\n record boundaries regardless of how it is delivered.
   const parts: string[] = [];
@@ -125,7 +139,7 @@ async function handleChatStream(
       parts.push(sseRecord('thinking', { content: piece }));
     }
   }
-  for (const piece of sliceText(opts.answer, chunkSize)) {
+  for (const piece of sliceText(answer, chunkSize)) {
     parts.push(sseRecord('message', { content: piece }));
     if (chunkDelayMs > 0) {
       // small artificial delay per chunk keeps the typing indicator visible
@@ -147,6 +161,22 @@ async function handleChatStream(
     },
     body: parts.join(''),
   });
+}
+
+function pickAnswerByDocumentIds(route: Route, opts: ChatMockOptions): string {
+  if (!opts.answersByDocs) return opts.answer;
+  let body: { document_ids?: unknown } | null = null;
+  try {
+    const raw = route.request().postData();
+    if (raw) body = JSON.parse(raw);
+  } catch {
+    body = null;
+  }
+  const ids = Array.isArray(body?.document_ids) ? body!.document_ids : [];
+  if (ids.length > 0) {
+    return opts.answersByDocs.withDocs ?? opts.answer;
+  }
+  return opts.answersByDocs.withoutDocs ?? opts.answer;
 }
 
 function sseRecord(event: string, data: unknown): string {

@@ -13,6 +13,8 @@ interface ChatMessage {
 
 export default function ChatPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [selectorOpen, setSelectorOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -21,28 +23,32 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // 加载可用文档与历史对话，使刷新后可恢复
+  // 加载可用文档与历史对话，使刷新后可恢复。
+  // 不使用 cancelled 守卫：React StrictMode 在 dev 下会双调用 effect，若
+  // 第一次调用被 cancelled 丢弃会拿到空列表。组件卸载后 setDocuments 仍是
+  // noop（React 18 静默忽略），不会引发可见 bug。
   useEffect(() => {
-    let cancelled = false;
     documentApi.list(1, 100)
       .then((res) => {
-        if (!cancelled) setDocuments(res.items);
+        setDocuments(res.items);
+        // 默认全选新加载的文档
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          for (const d of res.items) next.add(d.id);
+          return next;
+        });
       })
       .catch((err) => {
         console.error('加载文档列表失败:', err);
       });
     chatApi.history()
       .then((history) => {
-        if (cancelled) return;
         // 后端 ChatMessage 字段对齐前端 ChatMessage
         setMessages(history.map((m) => ({ id: m.id, role: m.role, content: m.content })));
       })
       .catch((err) => {
         console.error('加载对话历史失败:', err);
       });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -61,6 +67,24 @@ export default function ChatPage() {
     }
   }, [input]);
 
+  const toggleDocument = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      if (prev.size === documents.length) {
+        return new Set();
+      }
+      return new Set(documents.map((d) => d.id));
+    });
+  };
+
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -70,11 +94,13 @@ export default function ChatPage() {
     setError(null);
     setIsLoading(true);
 
+    const documentIds = Array.from(selectedIds);
+
     try {
       const response = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: input, document_ids: documents.map((d) => d.id) }),
+        body: JSON.stringify({ message: input, document_ids: documentIds }),
       });
 
       if (!response.ok) {
@@ -160,6 +186,16 @@ export default function ChatPage() {
     }
   };
 
+  const selectedCount = selectedIds.size;
+  const totalCount = documents.length;
+  // 三态文案：有文档未选 / 全选 / 部分选；无文档时不渲染
+  const contextLabel = (() => {
+    if (totalCount === 0) return null;
+    if (selectedCount === 0) return '未选择文档，将基于通用知识回答';
+    if (selectedCount === totalCount) return `基于全部 ${totalCount} 个文档回答`;
+    return `基于 ${selectedCount} / ${totalCount} 个文档回答`;
+  })();
+
   return (
     <>
       <header>
@@ -217,11 +253,59 @@ export default function ChatPage() {
       </div>
 
       <div className="input-area">
-        {documents.length > 0 && (
-          <div className="context-indicator">
-            基于 {documents.length} 个文档回答
+        {contextLabel && (
+          <div
+            className={`context-indicator ${selectedCount === 0 ? 'context-empty' : ''}`}
+            data-testid="context-indicator"
+          >
+            <span className="context-label">{contextLabel}</span>
+            {totalCount > 0 && (
+              <button
+                type="button"
+                className="context-toggle"
+                data-testid="context-toggle"
+                onClick={() => setSelectorOpen((v) => !v)}
+                aria-expanded={selectorOpen}
+              >
+                {selectorOpen ? '收起' : '选择文档'}
+              </button>
+            )}
           </div>
         )}
+
+        {selectorOpen && totalCount > 0 && (
+          <div className="document-selector" data-testid="document-selector">
+            <div className="document-selector-header">
+              <span>文档选择</span>
+              <button
+                type="button"
+                className="document-selector-all"
+                data-testid="document-selector-all"
+                onClick={toggleSelectAll}
+              >
+                {selectedCount === totalCount ? '全部取消' : '全部选择'}
+              </button>
+            </div>
+            <ul className="document-selector-list">
+              {documents.map((doc) => (
+                <li key={doc.id} className="document-selector-item">
+                  <label>
+                    <input
+                      type="checkbox"
+                      data-testid={`document-checkbox-${doc.id}`}
+                      checked={selectedIds.has(doc.id)}
+                      onChange={() => toggleDocument(doc.id)}
+                    />
+                    <span className="document-selector-name" title={doc.filename}>
+                      {doc.filename}
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="input-row">
           <textarea
             ref={textareaRef}
