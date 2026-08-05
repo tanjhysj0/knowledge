@@ -81,3 +81,9 @@ class SettingsUpdate(BaseModel):
     llm_api_key: Optional[str] = None
     llm_base_url: Optional[str] = None
     llm_model: Optional[str] = None
+
+
+class SettingsUpdateResponse(BaseModel):
+    """PUT /api/settings 的响应载荷。"""
+    message: str
+    settings: SettingsResponse
