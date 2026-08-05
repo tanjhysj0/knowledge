@@ -25,3 +25,17 @@ export interface ChatResponse {
   message: string;
   sources: string[];
 }
+
+export interface PaginatedDocumentsResponse {
+  items: Document[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface UploadProgress {
+  loaded: number;
+  total: number;
+  percentage: number;
+}

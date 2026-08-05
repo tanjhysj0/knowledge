@@ -1,22 +1,36 @@
 import axios from 'axios';
-import type { Document, ChatMessage, ChatRequest } from '../types';
+import type { Document, ChatMessage, ChatRequest, PaginatedDocumentsResponse, UploadProgress } from '../types';
 
 const api = axios.create({
   baseURL: '/api',
 });
 
 export const documentApi = {
-  upload: async (file: File): Promise<Document> => {
+  upload: async (
+    file: File,
+    onProgress?: (progress: UploadProgress) => void
+  ): Promise<Document> => {
     const formData = new FormData();
     formData.append('file', file);
     const response = await api.post<Document>('/documents/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (progressEvent) => {
+        if (onProgress && progressEvent.total) {
+          onProgress({
+            loaded: progressEvent.loaded,
+            total: progressEvent.total,
+            percentage: Math.round((progressEvent.loaded * 100) / progressEvent.total),
+          });
+        }
+      },
     });
     return response.data;
   },
 
-  list: async (): Promise<Document[]> => {
-    const response = await api.get<Document[]>('/documents');
+  list: async (page: number = 1, pageSize: number = 10): Promise<PaginatedDocumentsResponse> => {
+    const response = await api.get<PaginatedDocumentsResponse>('/documents', {
+      params: { page, page_size: pageSize },
+    });
     return response.data;
   },
 
