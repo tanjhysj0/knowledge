@@ -56,18 +56,6 @@ services:
     networks:
       - milvus
 
-  milvus-attu:
-    container_name: milvus-attu
-    image: zilliztech/attu:v2.4
-    environment:
-      ATTU_ADDRESS: milvus-standalone:19530
-    ports:
-      - "9091:3000"
-    depends_on:
-      - milvus-standalone
-    networks:
-      - milvus
-
   postgres:
     container_name: docqa-postgres
     image: postgres:16-alpine
