@@ -33,7 +33,7 @@ export default defineConfig({
   workers: 1, // Run tests serially to avoid state pollution
   reporter: 'list',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: 'http://127.0.0.1:5173',
     trace: 'on-first-retry',
     // 单个请求超时 5 秒
     actionTimeout: 5_000,
@@ -44,7 +44,7 @@ export default defineConfig({
   projects,
   webServer: {
     command: 'npm run dev',
-    url: 'http://localhost:5173',
+    url: 'http://127.0.0.1:5173',
     timeout: 120 * 1000,
     reuseExistingServer: !process.env.CI,
   },
