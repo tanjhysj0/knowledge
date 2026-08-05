@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+package-lock.json
+
+# Environment
+.env
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Vite
+*.local
