@@ -16,13 +16,8 @@ AI 自身没有时间感知，无法预估命令执行时长。为彻底消除�
 
 ## 强制执行模式
 
-每一个终端命令（无例外）必须按标准异步包装器执行：
-
-```bash
-# 后台执行命令，捕获输出与 PID
-<YOUR_COMMAND> > /tmp/agent_cmd.log 2>&1 & CMD_PID=$!
-```
-或
+每一个有IO相关的终端命令（无例外）必须有超时限制
+如：
 ```bash
 `timeout 15 npx playwright test e2e/api.spec.ts`
 ```
