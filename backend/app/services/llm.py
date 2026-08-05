@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, AsyncGenerator
 from openai import AsyncOpenAI
 from app.core.config import get_settings
 
@@ -37,3 +37,20 @@ class LLMService:
             temperature=temperature,
         )
         return response.choices[0].message.content or ""
+
+    async def stream_chat(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+    ) -> AsyncGenerator[str, None]:
+        """Send chat completion request with streaming and yield response chunks."""
+        stream = await self._client.chat.completions.create(
+            model=settings.llm_model,
+            messages=messages,
+            temperature=temperature,
+            stream=True,
+        )
+        async for chunk in stream:
+            content = chunk.choices[0].delta.content
+            if content:
+                yield content

@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, AsyncGenerator
 from app.services.embedding import EmbeddingService
 from app.services.vector_store import VectorStoreService
 from app.services.llm import LLMService
@@ -97,3 +97,75 @@ Please answer this question based on your general knowledge."""
             "sources": sources,
             "used_external": used_external,
         }
+
+    async def answer_stream(
+        self,
+        question: str,
+        document_ids: List[int] = None,
+        top_k: int = 5,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Answer a question using RAG with streaming.
+
+        Yields dicts with 'chunk', 'done', 'sources', and 'error' fields.
+        """
+        # Generate query embedding
+        query_embedding = await self._embedding_service.embed_text(question)
+
+        # Search Milvus for relevant chunks
+        search_results = self._vector_store.search(
+            query_embedding=query_embedding,
+            limit=top_k,
+            document_ids=document_ids,
+        )
+
+        # Check if retrieval score is above threshold
+        avg_score = 0.0
+        if search_results:
+            scores = [r.get("distance", 0) for r in search_results]
+            avg_score = sum(scores) / len(scores)
+
+        used_external = avg_score < RETRIEVAL_SCORE_THRESHOLD
+
+        # Build prompt and generate answer
+        if used_external or not search_results:
+            prompt = self._build_external_prompt(question)
+            messages = [{"role": "user", "content": prompt}]
+        else:
+            prompt = self._build_rag_prompt(question, search_results)
+            messages = [{"role": "user", "content": prompt}]
+
+        # Extract sources
+        sources = []
+        if search_results:
+            seen_docs = set()
+            for result in search_results:
+                doc_id = result.get("document_id")
+                if doc_id and doc_id not in seen_docs:
+                    seen_docs.add(doc_id)
+                    sources.append(f"doc_{doc_id}")
+
+        # Stream the response
+        try:
+            full_answer = ""
+            async for chunk in self._llm.stream_chat(messages=messages):
+                full_answer += chunk
+                yield {
+                    "chunk": chunk,
+                    "done": False,
+                    "sources": sources,
+                    "error": None,
+                }
+            yield {
+                "chunk": "",
+                "done": True,
+                "sources": sources,
+                "error": None,
+            }
+        except Exception as e:
+            yield {
+                "chunk": "",
+                "done": True,
+                "sources": sources,
+                "error": str(e),
+            }
