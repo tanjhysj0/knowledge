@@ -9,9 +9,6 @@ build/
 node_modules/
 package-lock.json
 
-# Environment
-.env
-
 # IDE
 .idea/
 .vscode/
@@ -21,3 +18,6 @@ package-lock.json
 
 # Vite
 *.local
+
+# Environment - only ignore backend/.env, keep .env.example
+backend/.env
