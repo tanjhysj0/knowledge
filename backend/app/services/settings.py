@@ -54,6 +54,11 @@ def get_llm_config() -> LLMSettings:
     )
 
 
+def get_settings_response() -> SettingsResponse:
+    """组装 GET /api/settings 的响应模型，供路由层直接调用。"""
+    return SettingsResponse(llm=get_llm_config())
+
+
 def update_llm_settings(update: SettingsUpdate) -> SettingsUpdateResponse:
     """更新 Provider 配置并重置 Provider 实例。"""
     settings = get_settings()
