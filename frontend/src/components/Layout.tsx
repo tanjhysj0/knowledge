@@ -11,6 +11,7 @@ export default function Layout({ children }: LayoutProps) {
     { path: '/', label: '首页' },
     { path: '/documents', label: '文档管理' },
     { path: '/chat', label: '问答' },
+    { path: '/settings', label: '设置' },
   ];
 
   return (
