@@ -10,7 +10,7 @@ from app.models.schemas import DocumentResponse, PaginatedDocumentsResponse
 from app.core.config import get_settings
 from app.services.parser import DocumentParser
 from app.services.chunker import TextChunker
-from app.services.embedding import EmbeddingService
+from app.services.embedding import get_embedding_provider
 from app.services.vector_store import VectorStoreService
 
 router = APIRouter()
@@ -67,7 +67,7 @@ async def upload_document(
 
     # Generate embeddings and store in Milvus
     try:
-        embedding_service = EmbeddingService()
+        embedding_service = get_embedding_provider()
         embeddings = await embedding_service.embed_texts(chunks)
 
         vector_store = VectorStoreService()

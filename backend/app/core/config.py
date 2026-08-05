@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     embedding_model: str = "text-embedding-3-small"
 
+    # Embedding Provider
+    embedding_provider: str = "openai"  # "openai" or "cohere"
+
+    # Cohere
+    cohere_api_key: str = ""
+    cohere_base_url: str = "https://api.cohere.ai/v1"
+    cohere_embedding_model: str = "embed-english-v3.0"
+
     # Milvus
     milvus_host: str = "localhost"
     milvus_port: int = 19530

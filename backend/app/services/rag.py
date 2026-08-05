@@ -1,5 +1,5 @@
 from typing import List, Dict, Any, AsyncGenerator
-from app.services.embedding import EmbeddingService
+from app.services.embedding import get_embedding_provider
 from app.services.vector_store import VectorStoreService
 from app.services.llm import LLMService
 from app.core.config import get_settings
@@ -14,7 +14,7 @@ class RAGService:
     """Service for RAG-based question answering."""
 
     def __init__(self):
-        self._embedding_service = EmbeddingService()
+        self._embedding_service = get_embedding_provider()
         self._vector_store = VectorStoreService()
         self._llm = LLMService()
 
