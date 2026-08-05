@@ -8,7 +8,7 @@ export default defineConfig({
   workers: 1, // Run tests serially to avoid state pollution
   reporter: 'list',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: 'http://localhost:5175',
     trace: 'on-first-retry',
   },
   projects: [
@@ -19,7 +19,7 @@ export default defineConfig({
   ],
   webServer: {
     command: 'npm run dev',
-    url: 'http://localhost:5173',
+    url: 'http://localhost:5175',
     timeout: 120 * 1000,
     reuseExistingServer: !process.env.CI,
   },

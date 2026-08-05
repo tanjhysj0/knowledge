@@ -14,9 +14,15 @@ class RAGService:
     """Service for RAG-based question answering."""
 
     def __init__(self):
-        self._embedding_service = get_embedding_provider()
+        self._embedding_service = None  # Lazy loaded
         self._vector_store = VectorStoreService()
         self._llm = LLMService()
+
+    @property
+    def embedding_service(self):
+        if self._embedding_service is None:
+            self._embedding_service = get_embedding_provider()
+        return self._embedding_service
 
     def _build_rag_prompt(self, question: str, context_chunks: List[Dict[str, Any]]) -> str:
         """Build RAG prompt from question and retrieved chunks."""
@@ -54,8 +60,15 @@ Please answer this question based on your general knowledge."""
 
         Returns a dict with 'answer', 'sources', and 'used_external' fields.
         """
+        # Skip embedding if no documents provided
+        if not document_ids:
+            prompt = self._build_external_prompt(question)
+            messages = [{"role": "user", "content": prompt}]
+            answer_text = await self._llm.chat(messages)
+            return {"answer": answer_text, "sources": [], "used_external": True}
+
         # Generate query embedding
-        query_embedding = await self._embedding_service.embed_text(question)
+        query_embedding = await self.embedding_service.embed_text(question)
 
         # Search Milvus for relevant chunks
         search_results = self._vector_store.search(
@@ -110,7 +123,7 @@ Please answer this question based on your general knowledge."""
         Yields dicts with 'chunk', 'done', 'sources', and 'error' fields.
         """
         # Generate query embedding
-        query_embedding = await self._embedding_service.embed_text(question)
+        query_embedding = await self.embedding_service.embed_text(question)
 
         # Search Milvus for relevant chunks
         search_results = self._vector_store.search(

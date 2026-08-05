@@ -88,13 +88,15 @@ async def chat_stream(
             # Add current user message to context
             context_messages.append({"role": "user", "content": request.message})
 
-            # Build RAG prompt with context
-            query_embedding = await rag_service._embedding_service.embed_text(request.message)
-            search_results = rag_service._vector_store.search(
-                query_embedding=query_embedding,
-                limit=5,
-                document_ids=request.document_ids,
-            )
+            # Build RAG prompt with context (skip if no documents)
+            search_results = []
+            if request.document_ids:
+                query_embedding = await rag_service.embedding_service.embed_text(request.message)
+                search_results = rag_service._vector_store.search(
+                    query_embedding=query_embedding,
+                    limit=5,
+                    document_ids=request.document_ids,
+                )
 
             # Build prompt with history context and retrieved context
             if search_results:

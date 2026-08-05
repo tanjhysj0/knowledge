@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { chatApi } from '../services/api';
 import type { Document } from '../types';
+import '../App.css';
 
 interface ChatMessage {
   id: number;

@@ -1,0 +1,9 @@
+{
+  "cloudAgentApiBase": "https://api.minimaxi.com/anthropic/v1/messages",
+  "modelMapping": {
+    "dmodel": "MiniMax-M3"
+  },
+  "apiKeyFile": "~/.qoderwake-cn/minimax-api.key",
+  "injectEnabled": false,
+  "llmInterceptEnabled": true
+}
