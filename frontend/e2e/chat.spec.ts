@@ -11,7 +11,7 @@ interface EndpointsConfig {
   llmInterceptEnabled: boolean;
 }
 
-// Read endpoints.json from project root
+// 从项目根目录读取端点配置
 function readEndpointsConfig(): EndpointsConfig | null {
   const configPath = path.join(process.cwd(), 'e2e', 'endpoints.json');
   try {
@@ -19,12 +19,12 @@ function readEndpointsConfig(): EndpointsConfig | null {
       return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     }
   } catch (e) {
-    console.error('Failed to read endpoints.json:', e);
+    console.error('读取 endpoints.json 失败:', e);
   }
   return null;
 }
 
-// Read API key from file path in config
+// 从配置文件指定的路径读取 API 密钥
 function readApiKey(filePath: string): string | null {
   try {
     const expandedPath = filePath.replace('~', os.homedir());
@@ -32,12 +32,12 @@ function readApiKey(filePath: string): string | null {
       return fs.readFileSync(expandedPath, 'utf-8').trim();
     }
   } catch (e) {
-    console.error('Failed to read API key:', e);
+    console.error('读取 API 密钥失败:', e);
   }
   return null;
 }
 
-// Configure backend settings before tests
+// 用真实 API 密钥配置后端设置
 async function configureBackendSettings(baseUrl: string, apiKey: string, model: string) {
   try {
     await fetch(`${baseUrl}/api/settings`, {
@@ -51,32 +51,30 @@ async function configureBackendSettings(baseUrl: string, apiKey: string, model: 
       }),
     });
   } catch (e) {
-    console.error('Failed to configure backend settings:', e);
+    console.error('配置后端设置失败:', e);
   }
 }
 
 test.describe('Chat Page - E2E', () => {
-  // Configure backend with endpoints.json settings before all tests
+  // 在所有测试开始前用 endpoints.json 配置真实后端
   test.beforeAll(async ({ request }) => {
     const config = readEndpointsConfig();
     if (config) {
       const apiKey = readApiKey(config.apiKeyFile);
       const model = config.modelMapping['dmodel'] || 'MiniMax-M3';
       if (apiKey) {
-        // Get the backend URL from frontend's API calls
-        const baseUrl = 'http://localhost:5173'.replace('/chat', '').replace(/\/$/, '');
         await configureBackendSettings('http://localhost:8000', apiKey, model);
       }
     }
   });
 
   test.beforeEach(async ({ page }) => {
-    // Navigate to the chat page
+    // 导航到聊天页
     await page.goto('/chat');
     await page.waitForLoadState('networkidle').catch(() => {});
-    // Wait for chat page to render
+    // 等待聊天页输入框渲染
     await page.waitForSelector('textarea');
-    // Clear any existing messages first
+    // 清理之前的对话历史
     const clearBtn = page.locator('button:has-text("清除历史")');
     if (await clearBtn.isVisible().catch(() => false)) {
       await clearBtn.click();
@@ -85,7 +83,7 @@ test.describe('Chat Page - E2E', () => {
   });
 
   test.afterEach(async ({ page }) => {
-    // Clean up messages after each test
+    // 每个测试结束后清理消息
     const clearBtn = page.locator('button:has-text("清除历史")');
     if (await clearBtn.isVisible().catch(() => false)) {
       await clearBtn.click();
@@ -93,254 +91,255 @@ test.describe('Chat Page - E2E', () => {
     }
   });
 
-  test('should display page title and empty state', async ({ page }) => {
+  test('应展示页面标题与空状态', async ({ page }) => {
+    // 验证页面标题与空状态文案
     await expect(page.locator('h1')).toContainText('DocQA');
     await expect(page.locator('.empty-state p')).toContainText('开始对话吧！');
     await expect(page.locator('.empty-state small')).toContainText('上传文档后可基于文档内容回答问题');
   });
 
-  test('should block empty message submission', async ({ page }) => {
+  test('应禁止空消息发送', async ({ page }) => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
-    // Button should be disabled when input is empty
+    // 空输入时按钮应禁用
     await expect(sendButton).toBeDisabled();
 
-    // Button should be disabled when input only has whitespace
+    // 仅空白字符输入时按钮也应禁用
     await textarea.fill('   ');
     await expect(sendButton).toBeDisabled();
 
-    // Button should be enabled when input has text
+    // 有文字输入时按钮应启用
     await textarea.fill('Hello');
     await expect(sendButton).toBeEnabled();
   });
 
-  test('should send message and display user message immediately', async ({ page }) => {
+  test('应发送消息并立即显示用户消息', async ({ page }) => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
+    // 输入消息并发送
     const testMessage = '测试消息 ' + Date.now();
     await textarea.fill(testMessage);
     await sendButton.click();
 
-    // User message should appear immediately (before API response)
-    await expect(page.locator('.message.user')).toBeVisible({ timeout: 5000 });
+    // 用户消息应立即出现，无需等待 API 响应
+    await expect(page.locator('.message.user')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('.message.user .content')).toContainText(testMessage);
   });
 
-  test('should show typing indicator after sending message', async ({ page }) => {
+  test('发送后应显示打字动画指示器', async ({ page }) => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
     await textarea.fill('Test message');
     await sendButton.click();
 
-    // Check for typing indicator (either .typing-indicator or .typing-cursor)
+    // 短暂等待后检查打字动画指示器（typing-indicator 或 typing-cursor）
     await page.waitForTimeout(300);
     const hasTyping = await page.locator('.typing-indicator, .typing-cursor').isVisible().catch(() => false);
     expect(hasTyping).toBeTruthy();
   });
 
-  test('should display streaming response after sending message', async ({ page }) => {
+  test('应展示流式回复', async ({ page }) => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
     await textarea.fill('Hello AI');
     await sendButton.click();
 
-    // Wait for assistant response to appear
-    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 60000 });
+    // 等待助手消息出现
+    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 10_000 });
 
-    // Verify the assistant message has content
+    // 验证助手消息有实际内容
     const assistantContent = page.locator('.message.assistant .content').first();
-    await expect(assistantContent).not.toBeEmpty({ timeout: 60000 });
+    await expect(assistantContent).not.toBeEmpty({ timeout: 10_000 });
   });
 
-  test('should maintain context in multi-turn conversation', async ({ page }) => {
+  test('多轮对话应保持上下文', async ({ page }) => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
-    // First message
+    // 第一轮对话
     const firstMessage = 'First question ' + Date.now();
     await textarea.fill(firstMessage);
     await sendButton.click();
 
-    // Wait for first user message to appear
-    await expect(page.locator('.message.user')).toBeVisible({ timeout: 5000 });
+    // 等待第一条用户消息出现
+    await expect(page.locator('.message.user')).toBeVisible({ timeout: 5_000 });
 
-    // Count messages after first exchange
+    // 记录第一轮消息数量
     const userMessages = page.locator('.message.user');
     const assistantMessages = page.locator('.message.assistant');
     const firstUserCount = await userMessages.count();
     const firstAssistantCount = await assistantMessages.count();
 
-    // Wait for response to complete
+    // 等待响应完成
     await page.waitForTimeout(500);
 
-    // Second message
+    // 第二轮对话
     const secondMessage = 'Second question';
     await textarea.fill(secondMessage);
     await sendButton.click();
 
-    // Wait for second user message
-    await expect(page.locator('.message.user').last()).toBeVisible({ timeout: 5000 });
+    // 等待第二条用户消息出现
+    await expect(page.locator('.message.user').last()).toBeVisible({ timeout: 5_000 });
 
-    // Verify we have more user messages now (multi-turn)
+    // 验证用户消息数量增加（多轮上下文生效）
     const secondUserCount = await userMessages.count();
     expect(secondUserCount).toBeGreaterThan(firstUserCount);
   });
 
-  test('should show clear history button when messages exist', async ({ page }) => {
+  test('存在消息时应显示清除历史按钮', async ({ page }) => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
-    // Clear button should not be visible initially
+    // 初始时清除按钮不应可见
     await expect(page.locator('button:has-text("清除历史")')).not.toBeVisible();
 
-    // Send a message
+    // 发送一条消息
     await textarea.fill('Test message');
     await sendButton.click();
 
-    // Wait for message to appear
+    // 等待消息出现
     await page.waitForTimeout(500);
 
-    // Clear button should now be visible
+    // 此时清除按钮应可见
     await expect(page.locator('button:has-text("清除历史")')).toBeVisible();
   });
 
-  test('should clear chat history when clicking clear button', async ({ page }) => {
+  test('点击清除按钮应清空对话历史', async ({ page }) => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
-    // Send a message
+    // 先发送一条消息
     await textarea.fill('Message to be cleared');
     await sendButton.click();
 
-    // Wait for message to appear
-    await expect(page.locator('.message.user')).toBeVisible({ timeout: 5000 });
+    // 等待用户消息出现
+    await expect(page.locator('.message.user')).toBeVisible({ timeout: 5_000 });
 
-    // Click clear button
+    // 点击清除按钮
     const clearBtn = page.locator('button:has-text("清除历史")');
     await clearBtn.click();
 
-    // Wait for clear to complete
-    await page.waitForTimeout(1000);
+    // 等待清除操作完成
+    await page.waitForTimeout(1_000);
 
-    // After clear, either empty state or no user messages should show
+    // 清除后应回到空状态或无用户消息
     const emptyStateVisible = await page.locator('.empty-state').isVisible().catch(() => false);
     const userMessageCount = await page.locator('.message.user').count();
     expect(emptyStateVisible || userMessageCount === 0).toBeTruthy();
   });
 
-  test('should show context indicator when documents are selected', async ({ page }) => {
-    // The chat page at /chat has empty documents array by default
+  test('选中文档时应显示上下文指示器', async ({ page }) => {
+    // /chat 路由默认不传 documents，所以无上下文指示器
     const contextIndicator = page.locator('.context-indicator');
     const hasDocsInitially = await contextIndicator.isVisible().catch(() => false);
 
-    // Without documents, no context indicator should show
+    // 没有文档时应不显示上下文指示器
     if (!hasDocsInitially) {
       await expect(contextIndicator).not.toBeVisible();
     }
   });
 
-  test('should support Enter key to send message', async ({ page }) => {
+  test('应支持 Enter 键发送消息', async ({ page }) => {
     const textarea = page.locator('textarea');
 
+    // 填写消息后按 Enter 发送（不带 Shift）
     const testMessage = 'Enter key test';
     await textarea.fill(testMessage);
-
-    // Press Enter to send (without Shift)
     await textarea.press('Enter');
 
-    // Message should be sent
-    await expect(page.locator('.message.user .content')).toContainText(testMessage, { timeout: 5000 });
+    // 消息应被发送
+    await expect(page.locator('.message.user .content')).toContainText(testMessage, { timeout: 5_000 });
   });
 
-  test('should support Shift+Enter for newline', async ({ page }) => {
+  test('应支持 Shift+Enter 换行', async ({ page }) => {
     const textarea = page.locator('textarea');
 
-    // Fill message with newline using pressSequentially
+    // 通过 pressSequentially 输入多行内容测试 Shift+Enter
     await textarea.click();
     await textarea.pressSequentially('Line 1');
     await textarea.press('Shift+Enter');
     await textarea.pressSequentially('Line 2');
 
-    // Content should contain newline
+    // 内容应包含换行符
     const content = await textarea.inputValue();
     expect(content).toContain('\n');
 
-    // Send button should still be enabled
+    // 发送按钮应保持启用
     await expect(page.locator('button:has-text("发送")')).toBeEnabled();
   });
 
-  test('should display role labels correctly for user and assistant', async ({ page }) => {
+  test('应正确展示用户与助手角色标签', async ({ page }) => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
     await textarea.fill('Test message');
     await sendButton.click();
 
-    // Wait for both messages
-    await expect(page.locator('.message.user')).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 60000 });
+    // 等待双方消息出现
+    await expect(page.locator('.message.user')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 10_000 });
 
-    // Check role labels
+    // 校验角色标签（用户 / AI）
     await expect(page.locator('.message.user .role')).toContainText('用户');
     await expect(page.locator('.message.assistant .role')).toContainText('AI');
   });
 
-  test('should resize textarea dynamically based on content', async ({ page }) => {
+  test('输入框应随内容动态调整高度', async ({ page }) => {
     const textarea = page.locator('textarea');
 
-    // Small input
+    // 短输入
     await textarea.fill('Short');
     const shortHeight = await textarea.evaluate((el) => el.getBoundingClientRect().height);
 
-    // Longer input
+    // 长输入
     await textarea.fill('This is a much longer message that should cause the textarea to grow in height');
     const longHeight = await textarea.evaluate((el) => el.getBoundingClientRect().height);
 
-    // Height should increase with more content
+    // 输入越长，高度应越大或保持相等
     expect(longHeight).toBeGreaterThanOrEqual(shortHeight);
   });
 
-  test('should disable send button while loading', async ({ page }) => {
+  test('加载中应禁用发送按钮', async ({ page }) => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
     await textarea.fill('Test message');
     await sendButton.click();
 
-    // Button should be disabled during loading
+    // 加载期间发送按钮应禁用
     await expect(sendButton).toBeDisabled();
   });
 
-  test('should auto-resize textarea with max height limit', async ({ page }) => {
+  test('输入框自适应高度应受限上限', async ({ page }) => {
     const textarea = page.locator('textarea');
 
-    // Very long input
+    // 极长输入
     const longText = 'Line 1\n'.repeat(20);
     await textarea.fill(longText);
     const height = await textarea.evaluate((el) => el.getBoundingClientRect().height);
 
-    // Height should not exceed max-height (120px as defined in App.css)
+    // 高度不应超过最大高度（App.css 中定义为 120px，允许少量测量误差）
     expect(height).toBeLessThanOrEqual(130);
   });
 
-  test('should load chat page and display input area', async ({ page }) => {
-    // Verify input area components exist
+  test('应加载聊天页并展示输入区', async ({ page }) => {
+    // 验证输入区组件存在
     await expect(page.locator('textarea')).toBeVisible();
     await expect(page.locator('button:has-text("发送")')).toBeVisible();
   });
 
-  test('should handle send button with whitespace-only input', async ({ page }) => {
+  test('输入仅空白时应禁用发送按钮', async ({ page }) => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
-    // Fill with whitespace only
+    // 仅空白字符输入
     await textarea.fill('   \n  \t  ');
 
-    // Button should be disabled
+    // 按钮应禁用
     await expect(sendButton).toBeDisabled();
   });
 });
