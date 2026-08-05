@@ -1,55 +1,81 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { chatApi } from '../services/api';
 import type { Document } from '../types';
+
+interface ChatMessage {
+  id: number;
+  role: string;
+  content: string;
+}
 
 interface ChatPageProps {
   documents: Document[];
 }
 
 export default function ChatPage({ documents }: ChatPageProps) {
-  const [messages, setMessages] = useState<{ id: number; role: string; content: string }[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const scrollToBottom = () => {
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, scrollToBottom]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
+    }
+  }, [input]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
     const userMessage = { id: Date.now(), role: 'user', content: input };
-    setMessages(prev => [...prev, userMessage]);
+    setMessages((prev) => [...prev, userMessage]);
     setInput('');
+    setError(null);
     setIsLoading(true);
 
     try {
       const response = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: input, document_ids: documents.map(d => d.id) }),
+        body: JSON.stringify({ message: input, document_ids: documents.map((d) => d.id) }),
       });
 
+      if (!response.ok) {
+        throw new Error('请求失败');
+      }
+
       const reader = response.body?.getReader();
-      if (!reader) return;
+      if (!reader) throw new Error('无法读取响应');
 
       let assistantContent = '';
       const assistantMessage = { id: Date.now() + 1, role: 'assistant', content: '' };
-      setMessages(prev => [...prev, assistantMessage]);
+      setMessages((prev) => [...prev, assistantMessage]);
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         const text = new TextDecoder().decode(value);
         assistantContent += text;
-        setMessages(prev =>
-          prev.map(m => m.id === assistantMessage.id ? { ...m, content: assistantContent } : m)
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantMessage.id ? { ...m, content: assistantContent } : m))
         );
-        scrollToBottom();
       }
-    } catch (error) {
-      console.error('Chat error:', error);
+    } catch (err: any) {
+      setError(err.message || '发送消息失败');
+      // Remove the user message if the request failed
+      setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
     } finally {
       setIsLoading(false);
     }
@@ -59,62 +85,90 @@ export default function ChatPage({ documents }: ChatPageProps) {
     try {
       await chatApi.clear();
       setMessages([]);
-    } catch (error) {
-      console.error('Clear failed:', error);
+    } catch (err) {
+      console.error('Clear failed:', err);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
     }
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map(msg => (
-          <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div
-              className={`max-w-[70%] rounded-lg px-4 py-2 ${
-                msg.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-800'
-              }`}
-            >
-              <p>{msg.content}</p>
+    <>
+      <header>
+        <h1>DocQA - 文档问答助手</h1>
+        {messages.length > 0 && (
+          <button onClick={handleClear} title="清除对话历史">
+            清除历史
+          </button>
+        )}
+      </header>
+
+      <div className="messages">
+        {messages.length === 0 && (
+          <div className="empty-state">
+            <p>开始对话吧！</p>
+            <small>上传文档后可基于文档内容回答问题</small>
+          </div>
+        )}
+
+        {messages.map((msg) => (
+          <div key={msg.id} className={`message ${msg.role}`}>
+            <div className="role">{msg.role === 'user' ? '用户' : 'AI'}</div>
+            <div className="content">
+              {msg.content}
+              {msg.role === 'assistant' && msg.content === messages.find(m => m.id === msg.id)?.content && isLoading && msg.id === messages[messages.length - 1]?.id && (
+                <span className="typing-cursor">|</span>
+              )}
             </div>
           </div>
         ))}
+
         {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-gray-200 rounded-lg px-4 py-2 text-gray-500">
-              思考中...
+          <div className="message assistant">
+            <div className="role">AI</div>
+            <div className="content typing-indicator">
+              <span></span>
+              <span></span>
+              <span></span>
             </div>
           </div>
         )}
+
+        {error && (
+          <div className="error-message" onClick={() => setError(null)}>
+            {error}
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="border-t p-4 bg-white">
-        <div className="flex gap-2">
+      <div className="input-area">
+        {documents.length > 0 && (
+          <div className="context-indicator">
+            基于 {documents.length} 个文档回答
+          </div>
+        )}
+        <div className="input-row">
           <textarea
+            ref={textareaRef}
             value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSend())}
-            placeholder="输入问题..."
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="输入问题... (Enter 发送，Shift+Enter 换行)"
             rows={1}
-            className="flex-1 border rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            onClick={handleSend}
             disabled={isLoading}
-            className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 disabled:opacity-50"
-          >
-            发送
+          />
+          <button onClick={handleSend} disabled={isLoading || !input.trim()}>
+            {isLoading ? '发送中...' : '发送'}
           </button>
-          {messages.length > 0 && (
-            <button
-              onClick={handleClear}
-              className="border px-4 py-2 rounded-lg hover:bg-gray-50"
-            >
-              清除
-            </button>
-          )}
         </div>
       </div>
-    </div>
+    </>
   );
 }
