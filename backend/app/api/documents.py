@@ -1,13 +1,12 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import List
+from sqlalchemy import select, func
 import os
 import aiofiles
 
 from app.core.database import get_db
 from app.models.document import Document
-from app.models.schemas import DocumentResponse
+from app.models.schemas import DocumentResponse, PaginatedDocumentsResponse
 from app.core.config import get_settings
 from app.services.parser import DocumentParser
 from app.services.chunker import TextChunker
@@ -86,11 +85,42 @@ async def upload_document(
     return document
 
 
-@router.get("", response_model=List[DocumentResponse])
-async def list_documents(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Document).order_by(Document.created_at.desc()))
+@router.get("", response_model=PaginatedDocumentsResponse)
+async def list_documents(
+    page: int = 1,
+    page_size: int = 10,
+    db: AsyncSession = Depends(get_db),
+):
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 10
+    if page_size > 100:
+        page_size = 100
+
+    # Get total count
+    count_result = await db.execute(select(func.count(Document.id)))
+    total = count_result.scalar() or 0
+
+    # Get paginated documents
+    offset = (page - 1) * page_size
+    result = await db.execute(
+        select(Document)
+        .order_by(Document.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
     documents = result.scalars().all()
-    return documents
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+    return PaginatedDocumentsResponse(
+        items=[DocumentResponse.model_validate(doc) for doc in documents],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
 
 
 @router.delete("/{document_id}")

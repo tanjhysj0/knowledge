@@ -50,3 +50,16 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     message: str
     sources: list[str] = []
+
+
+class PaginationParams(BaseModel):
+    page: int = 1
+    page_size: int = 10
+
+
+class PaginatedDocumentsResponse(BaseModel):
+    items: list[DocumentResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
