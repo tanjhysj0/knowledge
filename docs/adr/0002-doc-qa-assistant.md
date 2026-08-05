@@ -63,11 +63,7 @@
 
 ### 风险与对策
 
-| 风险 | 对策 |
-|------|------|
-| Milvus 部署复杂度高 | 使用 Docker Compose 快速启动 |
-| 大文件 PDF 解析慢 | 添加异步任务队列(可选) |
-| 多用户文档隔离 | 无需认证，全局共享(当前决策) |
+| 关系数据库 | PostgreSQL（Docker Compose 启动） |
 
 ---
 
@@ -144,4 +140,4 @@ class ChatMessage:
 ### 存储策略
 - **Milvus Collection**: 存储文档向量，字段包括 `id`, `document_id`, `content`, `chunk_index`
 - **本地文件系统**: `uploads/` 目录存储原始文件
-- **SQLite**: 存储 Document 和 ChatMessage 元数据(简化部署)
+- **PostgreSQL**: 存储 Document 和 ChatMessage 元数据(Docker Compose 启动)
