@@ -1,7 +1,7 @@
 {
   "cloudAgentApiBase": "https://api.minimaxi.com/anthropic/v1/messages",
   "modelMapping": {
-    "dmodel": "MiniMax-M3"
+    "dmodel": "MiniMax-M2.7-highspeed"
   },
   "apiKeyFile": "~/.qoderwake-cn/minimax-api.key",
   "injectEnabled": false,
