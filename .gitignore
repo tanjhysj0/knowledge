@@ -21,3 +21,4 @@ package-lock.json
 
 # Environment - only ignore backend/.env, keep .env.example
 backend/.env
+.coverage
