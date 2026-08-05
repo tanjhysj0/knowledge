@@ -4,7 +4,7 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # OpenAI
-    openai_api_key: str
+    openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o-mini"
     embedding_model: str = "text-embedding-3-small"
