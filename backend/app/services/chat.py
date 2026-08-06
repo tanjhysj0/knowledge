@@ -2,7 +2,7 @@
 import json
 from typing import AsyncIterator, Dict, List, Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -159,9 +159,3 @@ async def chat_history(db: AsyncSession) -> List[ChatMessage]:
         select(ChatMessage).order_by(ChatMessage.created_at.asc())
     )
     return list(result.scalars().all())
-
-
-async def clear_chat_history(db: AsyncSession) -> None:
-    """删除全部 ``ChatMessage`` 行并提交。"""
-    await db.execute(delete(ChatMessage))
-    await db.commit()

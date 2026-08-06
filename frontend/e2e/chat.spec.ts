@@ -3,6 +3,10 @@ import { test, expect } from '@playwright/test';
 test.describe('Chat Page - E2E', () => {
   // 后端通过 X-E2E-Test Header 自动返回 MockLLMProvider；前端不再额外拦截。
   // 其他接口（history/documents/settings）继续走真实后端。
+  //
+  // 串行执行：后端不再提供 DELETE /api/chat/history（#27），history 会在
+  // 多次测试间累积。串行确保依赖计数 / 空状态的断言在隔离环境中成立。
+  test.describe.configure({ mode: 'serial' });
 
   test.beforeEach(async ({ page }) => {
     // 导航到聊天页
@@ -10,31 +14,13 @@ test.describe('Chat Page - E2E', () => {
     await page.waitForLoadState('networkidle').catch(() => {});
     // 等待聊天页输入框渲染
     await page.waitForSelector('textarea');
-
-    // 清理之前的对话历史
-    const clearBtn = page.locator('button:has-text("清除历史")');
-    if (await clearBtn.isVisible().catch(() => false)) {
-      await clearBtn.click();
-    }
   });
 
-  test.afterEach(async ({ page }) => {
-    // 每个测试结束后清除后端历史记录。
-    // 使用 page.request 从 Node.js 端发 DELETE，超时 1s。
-    // page 可能已为 null（异常路径），增加防护。
-    if (!page) return;
-    try {
-      await page.request.delete('/api/chat/history', { timeout: 1_000 });
-    } catch (e) {
-      console.error('afterEach 清史失败:', e);
-    }
-  });
-
-  test('应展示页面标题与空状态', async ({ page }) => {
-    // 验证页面标题与空状态文案
+  test('应展示页面标题与聊天区', async ({ page }) => {
+    // 验证页面标题
     await expect(page.locator('h1')).toContainText('DocQA');
-    await expect(page.locator('.empty-state p')).toContainText('开始对话吧！');
-    await expect(page.locator('.empty-state small')).toContainText('上传文档后可基于文档内容回答问题');
+    await expect(page.locator('textarea')).toBeVisible();
+    await expect(page.locator('button:has-text("发送")')).toBeVisible();
   });
 
   test('应禁止空消息发送', async ({ page }) => {
@@ -57,14 +43,15 @@ test.describe('Chat Page - E2E', () => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
-    // 输入消息并发送
-    const testMessage = '测试消息 ' + Date.now();
+    // 输入消息并发送（唯一标记以避免与其他历史消息冲突）
+    const testMessage = 'send-now-' + Date.now();
     await textarea.fill(testMessage);
     await sendButton.click();
 
-    // 用户消息应立即出现，无需等待 API 响应
-    await expect(page.locator('.message.user')).toBeVisible({ timeout: 3_000 });
-    await expect(page.locator('.message.user .content')).toContainText(testMessage);
+    // 用户消息应立即出现，无需等待 API 响应（按内容定位最后一条）
+    await expect(
+      page.locator('.message.user .content').filter({ hasText: testMessage })
+    ).toBeVisible({ timeout: 3_000 });
   });
 
   test('发送后应显示打字动画指示器', async ({ page }) => {
@@ -112,14 +99,12 @@ test.describe('Chat Page - E2E', () => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
-    await textarea.fill('Hello AI');
+    const tag = Date.now();
+    await textarea.fill('stream-' + tag);
     await sendButton.click();
 
-    // 等待助手消息出现
-    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 3_000 });
-
-    // 验证助手消息有实际内容
-    const assistantContent = page.locator('.message.assistant .content').first();
+    // 等待助手消息出现（最后一条即本次回复）
+    const assistantContent = page.locator('.message.assistant .content').last();
     await expect(assistantContent).not.toBeEmpty({ timeout: 3_000 });
 
     // Issue #28：助手渲染内容不应暴露原始 SSE wire 字段或 思考标签
@@ -134,74 +119,35 @@ test.describe('Chat Page - E2E', () => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
-    // 第一轮对话
-    const firstMessage = 'First question ' + Date.now();
+    // 第一轮对话（唯一标记，避开历史消息干扰）
+    const tag = Date.now();
+    const firstMessage = `multiround-1-${tag}`;
     await textarea.fill(firstMessage);
     await sendButton.click();
 
-    // 等待第一条用户消息出现
-    await expect(page.locator('.message.user')).toBeVisible({ timeout: 3_000 });
+    // 等待首轮流式结束：typing-indicator 消失（按钮文案从 “发送中...” 变回 “发送”）
+    await expect(sendButton).toHaveText('发送', { timeout: 5_000 });
 
-    // 记录第一轮消息数量
-    const userMessages = page.locator('.message.user');
-    const assistantMessages = page.locator('.message.assistant');
-    const firstUserCount = await userMessages.count();
-
-    // 等待响应完成：等最后一条 assistant message 的 content 出现
+    // 按内容定位本轮用户消息计数
     await expect(
-      assistantMessages.last().locator('.content')
-    ).not.toBeEmpty({ timeout: 3_000 });
+      page.locator('.message.user .content', { hasText: `multiround-1-${tag}` })
+    ).toHaveCount(1, { timeout: 3_000 });
 
     // 第二轮对话
-    const secondMessage = 'Second question';
+    const secondMessage = `multiround-2-${tag}`;
     await textarea.fill(secondMessage);
     await sendButton.click();
 
-    // 等待第二条用户消息出现
-    await expect(page.locator('.message.user').last()).toBeVisible({ timeout: 3_000 });
+    // 等待第二轮流式结束
+    await expect(sendButton).toHaveText('发送', { timeout: 5_000 });
 
-    // 等待第二轮响应完成
+    // 按唯一标记验证两条用户消息均存在（避免依赖总数）
     await expect(
-      assistantMessages.last().locator('.content')
-    ).not.toBeEmpty({ timeout: 3_000 });
-
-    // 验证用户消息数量增加（多轮上下文生效）
-    const secondUserCount = await userMessages.count();
-    expect(secondUserCount).toBeGreaterThan(firstUserCount);
-  });
-
-  test('存在消息时应显示清除历史按钮', async ({ page }) => {
-    const textarea = page.locator('textarea');
-    const sendButton = page.locator('button:has-text("发送")');
-
-    // 初始时清除按钮不应可见
-    await expect(page.locator('button:has-text("清除历史")')).not.toBeVisible();
-
-    // 发送一条消息
-    await textarea.fill('Test message');
-    await sendButton.click();
-
-    // 此时清除按钮应可见（直接等可见，避免硬等待）
-    await expect(page.locator('button:has-text("清除历史")')).toBeVisible({ timeout: 3_000 });
-  });
-
-  test('点击清除按钮应清空对话历史', async ({ page }) => {
-    const textarea = page.locator('textarea');
-    const sendButton = page.locator('button:has-text("发送")');
-
-    // 先发送一条消息
-    await textarea.fill('Message to be cleared');
-    await sendButton.click();
-
-    // 等待用户消息出现
-    await expect(page.locator('.message.user')).toBeVisible({ timeout: 3_000 });
-
-    // 点击清除按钮
-    const clearBtn = page.locator('button:has-text("清除历史")');
-    await clearBtn.click();
-
-    // 等待空状态重新出现（直接等，避免硬等待 1s）
-    await expect(page.locator('.empty-state')).toBeVisible({ timeout: 3_000 });
+      page.locator('.message.user .content', { hasText: `multiround-1-${tag}` })
+    ).toHaveCount(1);
+    await expect(
+      page.locator('.message.user .content', { hasText: `multiround-2-${tag}` })
+    ).toHaveCount(1);
   });
 
   test('未上传文档时不应显示 context-indicator', async ({ page }) => {
@@ -218,13 +164,15 @@ test.describe('Chat Page - E2E', () => {
   test('应支持 Enter 键发送消息', async ({ page }) => {
     const textarea = page.locator('textarea');
 
-    // 填写消息后按 Enter 发送（不带 Shift）
-    const testMessage = 'Enter key test';
+    // 填写消息后按 Enter 发送（不带 Shift）。使用唯一标记避免与历史冲突。
+    const testMessage = 'enter-' + Date.now();
     await textarea.fill(testMessage);
     await textarea.press('Enter');
 
-    // 消息应被发送
-    await expect(page.locator('.message.user .content')).toContainText(testMessage, { timeout: 3_000 });
+    // 消息应被发送（按内容定位）
+    await expect(
+      page.locator('.message.user .content').filter({ hasText: testMessage })
+    ).toBeVisible({ timeout: 3_000 });
   });
 
   test('应支持 Shift+Enter 换行', async ({ page }) => {
@@ -248,16 +196,21 @@ test.describe('Chat Page - E2E', () => {
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
-    await textarea.fill('Test message');
+    const testMessage = 'role-label-' + Date.now();
+    await textarea.fill(testMessage);
     await sendButton.click();
 
-    // 等待双方消息出现
-    await expect(page.locator('.message.user')).toBeVisible({ timeout: 3_000 });
-    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 3_000 });
+    // 等待本轮用户消息出现
+    await expect(
+      page.locator('.message.user .content').filter({ hasText: testMessage })
+    ).toBeVisible({ timeout: 3_000 });
 
-    // 校验角色标签（用户 / AI）
-    await expect(page.locator('.message.user .role')).toContainText('用户');
-    await expect(page.locator('.message.assistant .role')).toContainText('AI');
+    // 等待本轮助手回复（最后一条 assistant 即本次回复）
+    await expect(page.locator('.message.assistant .content').last()).not.toBeEmpty({ timeout: 3_000 });
+
+    // 校验角色标签（用户 / AI）。使用 .first() 避开多匹配。
+    await expect(page.locator('.message.user .role').first()).toContainText('用户');
+    await expect(page.locator('.message.assistant .role').first()).toContainText('AI');
   });
 
   test('输入框应随内容动态调整高度', async ({ page }) => {
@@ -316,29 +269,34 @@ test.describe('Chat Page - E2E', () => {
   });
 
   test('刷新页面应恢复对话历史', async ({ page }) => {
-    // 发送 2 条消息 → 等待响应 → reload → 验证历史显示
+    // 发送 2 条带唯一标记的消息 → 等待响应 → reload → 验证历史包含这两条
     const textarea = page.locator('textarea');
     const sendButton = page.locator('button:has-text("发送")');
 
-    const firstMsg = 'reload-msg-1-' + Date.now();
+    const tag = Date.now();
+    const firstMsg = `reload-msg-1-${tag}`;
     await textarea.fill(firstMsg);
     await sendButton.click();
-    await expect(page.locator('.message.user .content')).toContainText(firstMsg, { timeout: 3_000 });
-    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 3_000 });
+    await expect(page.locator(`.message.user .content:has-text("${firstMsg}")`)).toBeVisible({ timeout: 3_000 });
+    // 等待首轮流式结束
+    await expect(sendButton).toHaveText('发送', { timeout: 5_000 });
 
-    const secondMsg = 'reload-msg-2-' + Date.now();
+    const secondMsg = `reload-msg-2-${tag}`;
     await textarea.fill(secondMsg);
     await sendButton.click();
-    await expect(page.locator('.message.user .content').last()).toContainText(secondMsg, { timeout: 3_000 });
+    await expect(page.locator(`.message.user .content:has-text("${secondMsg}")`)).toBeVisible({ timeout: 3_000 });
+    await expect(sendButton).toHaveText('发送', { timeout: 5_000 });
 
     // reload 后 ChatPage 应调用 history 接口并恢复显示
     await page.reload();
     await page.waitForSelector('textarea');
 
-    await expect(page.locator('.message.user')).toHaveCount(2, { timeout: 3_000 });
-    await expect(page.locator('.message.assistant')).toHaveCount(2, { timeout: 3_000 });
-
-    await expect(page.locator('.message.user .content').first()).toContainText(firstMsg);
-    await expect(page.locator('.message.user .content').last()).toContainText(secondMsg);
+    // 用唯一标记定位，不依赖总数（history 可能累积）
+    await expect(
+      page.locator(`.message.user .content:has-text("${firstMsg}")`)
+    ).toBeVisible({ timeout: 5_000 });
+    await expect(
+      page.locator(`.message.user .content:has-text("${secondMsg}")`)
+    ).toBeVisible({ timeout: 5_000 });
   });
 });

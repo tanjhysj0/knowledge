@@ -109,25 +109,11 @@ export const test = base.extend<E2EFixtures>({
     };
 
     const cleanupAll = async (): Promise<void> => {
-      // Delete tracked docs first
+      // 仅删除当前测试显式追踪的文档，避免并行测试互相清理数据。
       for (const doc of tracked) {
         await deleteDocument(doc.id);
       }
       tracked.length = 0;
-
-      // Also delete any leftover docs whose filename starts with an e2e prefix
-      const all = await listDocuments();
-      const leftover = all.filter(
-        (d) =>
-          d.filename.startsWith('e2e-upload-') ||
-          d.filename.startsWith('progress-test-') ||
-          d.filename.startsWith('test-doc-') ||
-          d.filename.startsWith('to-delete-') ||
-          d.filename.startsWith('uploading-test-')
-      );
-      for (const doc of leftover) {
-        await deleteDocument(doc.id);
-      }
     };
 
     await use({ track, cleanupAll });

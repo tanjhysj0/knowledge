@@ -49,24 +49,6 @@ test.describe('Backend API 契约 - E2E', () => {
     }
   });
 
-  test.describe.configure({ mode: 'serial' });
-  test('DELETE /api/chat/history 应清空所有历史', async ({ page }) => {
-    // 串行执行避免与并发写入的测试争抢后端 history 表。
-    // 重新清空 → 轮询直到 history 为空（容忍其它测试瞬时写入，最多 5 次）。
-    let historyLength = -1;
-    for (let i = 0; i < 5; i++) {
-      const delRes = await page.request.delete('/api/chat/history');
-      expect(delRes.ok()).toBeTruthy();
-  
-      const getRes = await page.request.get('/api/chat/history');
-      const history = await getRes.json();
-      historyLength = history.length;
-      if (historyLength === 0) break;
-      await page.waitForTimeout(300);
-    }
-    expect(historyLength).toBe(0);
-  });
-
   test('GET /api/documents 应返回分页结构', async ({ page }) => {
     const res = await page.request.get('/api/documents');
     expect(res.ok()).toBeTruthy();

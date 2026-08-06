@@ -169,16 +169,6 @@ export default function ChatPage() {
     }
   };
 
-  const handleClear = async () => {
-    try {
-      await chatApi.clear();
-      setMessages([]);
-      setThinkingOpen({});
-    } catch (err) {
-      console.error('Clear failed:', err);
-    }
-  };
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -200,11 +190,6 @@ export default function ChatPage() {
     <>
       <header>
         <h1>DocQA - 文档问答助手</h1>
-        {messages.length > 0 && (
-          <button onClick={handleClear} title="清除对话历史">
-            清除历史
-          </button>
-        )}
       </header>
 
       <div className="messages">

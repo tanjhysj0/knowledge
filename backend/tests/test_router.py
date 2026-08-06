@@ -18,7 +18,7 @@ EXPECTED_METHODS = {
     "/api/documents/{document_id}": {"DELETE"},
     "/api/chat": {"POST"},
     "/api/chat/stream": {"POST"},
-    "/api/chat/history": {"GET", "DELETE"},
+    "/api/chat/history": {"GET"},
     "/api/settings": {"GET", "PUT"},
 }
 

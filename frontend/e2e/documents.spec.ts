@@ -51,52 +51,75 @@ cleanupTest.describe('Documents Page - E2E', () => {
     expect(hasEmptyState || hasDocs > 0).toBeTruthy();
   });
 
-  cleanupTest('存在分页时应能跳转下一页', async ({ page }) => {
-    // 等待分页器出现
-    await page.waitForSelector('.pagination', { state: 'visible', timeout: 5_000 }).catch(() => {});
-
-    const hasPagination = await page.locator('.pagination').isVisible().catch(() => false);
-
-    if (hasPagination) {
-      const nextButton = page.locator('button:has-text("下一页")');
-      const isDisabled = await nextButton.isDisabled().catch(() => true);
-
-      if (!isDisabled) {
-        // 记录翻页前的页码
-        const pageInfoBefore = await page.locator('.pagination-info').textContent().catch(() => '');
-
-        await nextButton.click();
-
-        // 等待页码文本变化（比 networkidle 更精确，避免 race condition）
-        await expect(page.locator('.pagination-info')).not.toHaveText(pageInfoBefore ?? '', { timeout: 5_000 });
-
-        // 翻页后页码应发生变化
-        const pageInfoAfter = await page.locator('.pagination-info').textContent().catch(() => '');
-        expect(pageInfoAfter).not.toBe(pageInfoBefore);
-      }
+  cleanupTest('存在分页时应能跳转下一页', async ({ page, uploadedDocs }) => {
+    // 自包含：上传 11 个文档，确保产生 2 页。
+    // 避免依赖其他测试遗留文档（被并发 cleanupAll 删除导致总页数不稳定）。
+    const tag = Date.now();
+    const fileInput = page.locator('input[type="file"]');
+    for (let i = 0; i < 11; i++) {
+      await fileInput.setInputFiles({
+        name: `pagination-${tag}-${i}.txt`,
+        mimeType: 'text/plain',
+        buffer: Buffer.from(`pagination doc ${i}`),
+      });
+      await expect(page.locator(`.doc-item-name:has-text("pagination-${tag}-${i}.txt")`)).toBeVisible({ timeout: 5_000 });
+      await uploadedDocs.track(`pagination-${tag}-${i}.txt`);
     }
+
+    // 等待分页器出现并确认当前页可翻页
+    await expect(page.locator('.pagination')).toBeVisible({ timeout: 10_000 });
+
+    const nextButton = page.locator('button:has-text("下一页")');
+    await expect(nextButton).toBeEnabled({ timeout: 5_000 });
+
+    // 记录翻页前的页码（确认当前位于第一页）
+    const pageInfo = page.locator('.pagination-info');
+    await expect(pageInfo).toContainText(/第 1 \/ \d+ 页/, { timeout: 5_000 });
+    const pageInfoBefore = (await pageInfo.textContent()) ?? '';
+
+    await nextButton.click();
+
+    // 等待页码文本变化
+    await expect(pageInfo).not.toHaveText(pageInfoBefore, { timeout: 5_000 });
+    await expect(pageInfo).toContainText(/第 2 \/ \d+ 页/, { timeout: 5_000 });
   });
 
-  cleanupTest('应能从分页跳转上一页', async ({ page }) => {
-    await page.waitForSelector('.pagination', { state: 'visible', timeout: 5_000 }).catch(() => {});
-
-    const hasPagination = await page.locator('.pagination').isVisible().catch(() => false);
-
-    if (hasPagination) {
-      const prevButton = page.locator('button:has-text("上一页")');
-      const isDisabled = await prevButton.isDisabled().catch(() => true);
-
-      if (!isDisabled) {
-        const pageInfoBefore = await page.locator('.pagination-info').textContent().catch(() => '');
-        await prevButton.click();
-
-        // 等待页码文本变化（避免 race condition）
-        await expect(page.locator('.pagination-info')).not.toHaveText(pageInfoBefore ?? '', { timeout: 5_000 });
-
-        const pageInfoAfter = await page.locator('.pagination-info').textContent().catch(() => '');
-        expect(pageInfoAfter).not.toBe(pageInfoBefore);
-      }
+  cleanupTest('应能从分页跳转上一页', async ({ page, uploadedDocs }) => {
+    // 自包含：上传 11 个文档确保产生 2 页，再上传 1 个确保回到第 1 页后
+    // 还能向上点（测试上一页）。避免依赖其他测试遗留文档（被并发 cleanupAll 删除导致总页数不稳定）。
+    const tag = Date.now();
+    const fileInput = page.locator('input[type="file"]');
+    for (let i = 0; i < 12; i++) {
+      await fileInput.setInputFiles({
+        name: `prevpage-${tag}-${i}.txt`,
+        mimeType: 'text/plain',
+        buffer: Buffer.from(`prevpage doc ${i}`),
+      });
+      await expect(page.locator(`.doc-item-name:has-text("prevpage-${tag}-${i}.txt")`)).toBeVisible({ timeout: 5_000 });
+      await uploadedDocs.track(`prevpage-${tag}-${i}.txt`);
     }
+
+    await expect(page.locator('.pagination')).toBeVisible({ timeout: 10_000 });
+
+    const nextButton = page.locator('button:has-text("下一页")');
+    await expect(nextButton).toBeEnabled({ timeout: 5_000 });
+
+    // 先跳到第 2 页（点完等页码稳定）
+    const pageInfo = page.locator('.pagination-info');
+    await expect(pageInfo).toContainText('第 1 /', { timeout: 5_000 });
+    await nextButton.click();
+    await expect(pageInfo).toContainText('第 2 /', { timeout: 5_000 });
+
+    // 记录翻页前的页码
+    const pageInfoBefore = (await pageInfo.textContent()) ?? '';
+
+    // 点上一页
+    const prevButton = page.locator('button:has-text("上一页")');
+    await prevButton.click();
+
+    // 等待页码文本变化
+    await expect(pageInfo).not.toHaveText(pageInfoBefore, { timeout: 5_000 });
+    await expect(pageInfo).toContainText('第 1 /', { timeout: 5_000 });
   });
 
   cleanupTest('上传不支持的文件类型应报错', async ({ page }) => {
@@ -136,13 +159,11 @@ cleanupTest.describe('Documents Page - E2E', () => {
     expect(hasDraggingClass).toBeTruthy();
   });
 
-  cleanupTest('上传 txt 文件应出现在列表中且元数据正确', async ({ page }) => {
+  cleanupTest('上传 txt 文件应出现在列表中且元数据正确', async ({ page, uploadedDocs }) => {
     // 上传 TXT 文件并校验前端列表与后端元数据
     const filename = `e2e-upload-${Date.now()}.txt`;
     const testContent = 'This is a test document for E2E testing.';
     const fileInput = page.locator('input[type="file"]');
-
-    const beforeCount = (await listDocumentsViaApi()).length;
 
     await fileInput.setInputFiles({
       name: filename,
@@ -159,11 +180,11 @@ cleanupTest.describe('Documents Page - E2E', () => {
     expect(uploadedDoc).toBeDefined();
     expect(uploadedDoc!.chunk_count).toBeGreaterThan(0);
 
-    const afterCount = (await listDocumentsViaApi()).length;
-    expect(afterCount).toBe(beforeCount + 1);
+    // 显式 track，由 uploadedDocs fixture 在 spec 结束时清理
+    await uploadedDocs.track(filename);
   });
 
-  cleanupTest('应完成大体积 markdown 文件上传并持久化', async ({ page }) => {
+  cleanupTest('应完成大体积 markdown 文件上传并持久化', async ({ page, uploadedDocs }) => {
     // 上传大体积 MD 文件验证进度与持久化
     const filename = `progress-test-${Date.now()}.md`;
     const testContent = 'Test document content for progress bar testing. '.repeat(200);
@@ -176,6 +197,7 @@ cleanupTest.describe('Documents Page - E2E', () => {
     });
 
     await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 5_000 });
+    await uploadedDocs.track(filename);
 
     // 校验大小与分块数
     const uploadedDoc = (await listDocumentsViaApi()).find(d => d.filename === filename);
@@ -184,7 +206,7 @@ cleanupTest.describe('Documents Page - E2E', () => {
     expect(uploadedDoc!.chunk_count).toBeGreaterThan(0);
   });
 
-  cleanupTest('上传 markdown 应在后端创建分块', async ({ page }) => {
+  cleanupTest('上传 markdown 应在后端创建分块', async ({ page, uploadedDocs }) => {
     // 上传 MD 文件并断言后端分块成功
     const filename = `test-doc-${Date.now()}.md`;
     const mdContent = `# Test Document
@@ -206,6 +228,7 @@ Content for section 2.
     });
 
     await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toBeVisible({ timeout: 5_000 });
+    await uploadedDocs.track(filename);
 
     const uploadedDoc = (await listDocumentsViaApi()).find(d => d.filename === filename);
     expect(uploadedDoc).toBeDefined();
@@ -238,10 +261,10 @@ Content for section 2.
     // 前端列表中该文档应消失
     await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toHaveCount(0, { timeout: 5_000 });
 
-    // 后端也应同步删除，总数减 1
+    // 后端也应同步删除（具体文件不存在；总数受并发影响不做严格断言）
     const afterDocs = await listDocumentsViaApi();
     expect(afterDocs.find(d => d.filename === filename)).toBeUndefined();
-    expect(afterDocs.length).toBe(beforeDocs.length - 1);
+    expect(afterDocs.length).toBeLessThanOrEqual(beforeDocs.length - 1);
   });
 
   cleanupTest('删除不存在的文档应返回 404', async ({ page }) => {

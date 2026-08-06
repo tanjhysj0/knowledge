@@ -58,7 +58,6 @@ npm run dev
 | GET | /api/documents | 列出文档 |
 | DELETE | /api/documents/{id} | 删除文档 |
 | POST | /api/chat/stream | 流式对话 |
-| DELETE | /api/chat/history | 清除历史 |
 
 ## 项目结构
 

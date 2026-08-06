@@ -11,12 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.services import chat as chat_service
-from app.services.chat import (
-    ask,
-    chat_history,
-    clear_chat_history,
-    stream_answer,
-)
+from app.services.chat import ask, chat_history, stream_answer
 from app.services.llm import reset_providers
 
 
@@ -361,15 +356,3 @@ class TestChatHistory:
         result = await chat_history(db)
 
         assert result == rows
-
-
-class TestClearChatHistory:
-    """``clear_chat_history`` issues a bulk delete and commits."""
-
-    @pytest.mark.asyncio
-    async def test_commits_after_delete(self):
-        db = _FakeAsyncSession()
-
-        await clear_chat_history(db)
-
-        assert db.commits == 1

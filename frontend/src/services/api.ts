@@ -51,10 +51,6 @@ export const chatApi = {
     const response = await api.get<ChatMessage[]>('/chat/history');
     return response.data;
   },
-
-  clear: async (): Promise<void> => {
-    await api.delete('/chat/history');
-  },
 };
 
 export const settingsApi = {

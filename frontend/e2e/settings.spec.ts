@@ -74,12 +74,13 @@ cleanupTest.describe('Settings Page - True E2E', () => {
     const llmProviderSelect = page.locator('select').first();
     await expect(llmProviderSelect).not.toBeEmpty();
 
-    // Base URL 与 Model 输入框应展示当前配置
+    // Base URL 与 Model 输入框应展示后端返回的当前配置（允许空字符串）。
+    const currentSettings = await page.request.get('/api/settings').then((res) => res.json());
     const baseUrlInput = page.locator('input[type="text"]').first();
-    await expect(baseUrlInput).not.toBeEmpty();
+    await expect(baseUrlInput).toHaveValue(currentSettings.llm.base_url);
 
     const modelInput = page.locator('input[type="text"]').nth(1);
-    await expect(modelInput).not.toBeEmpty();
+    await expect(modelInput).toHaveValue(currentSettings.llm.model);
   });
 
   cleanupTest('切换 LLM Provider 保存刷新后应持久化', async ({ page }) => {

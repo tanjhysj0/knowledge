@@ -48,9 +48,3 @@ async def chat_stream(
 @router.get("/history", response_model=List[ChatMessageResponse])
 async def get_chat_history(db: AsyncSession = Depends(get_db)):
     return await chat_service.chat_history(db)
-
-
-@router.delete("/history")
-async def delete_chat_history(db: AsyncSession = Depends(get_db)):
-    await chat_service.clear_chat_history(db)
-    return {"message": "Chat history cleared"}

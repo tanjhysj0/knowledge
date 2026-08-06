@@ -28,14 +28,17 @@ async function listDocuments(): Promise<{ id: number; filename: string }[]> {
   }
 }
 
-// 本 spec 专属清理：每个 spec 前删除遗留的 cross-page-rag-* 文档。
+// 本 spec 串行执行，避免清理与上传操作互相竞争。
+cleanupTest.describe.configure({ mode: 'serial' });
+
+// 清理本 spec 运行留下的文档。
 async function cleanupCrossPageDocs(): Promise<void> {
   const docs = await listDocuments();
   const ctx = await apiRequest.newContext({ baseURL: BACKEND_BASE });
   try {
-    for (const d of docs) {
-      if (d.filename.startsWith('cross-page-rag-')) {
-        await ctx.delete(`/api/documents/${d.id}`).catch(() => {});
+    for (const document of docs) {
+      if (document.filename.startsWith('cross-page-rag-')) {
+        await ctx.delete(`/api/documents/${document.id}`).catch(() => {});
       }
     }
   } finally {
@@ -43,7 +46,7 @@ async function cleanupCrossPageDocs(): Promise<void> {
   }
 }
 
-// 进入 ChatPage 并等待 documents list 接口返回（避免 React StrictMode 双调用竞态）
+
 async function goToChatAndWaitDocs(page: import('@playwright/test').Page): Promise<void> {
   const listPromise = page.waitForResponse(
     (res) =>
@@ -59,7 +62,7 @@ async function goToChatAndWaitDocs(page: import('@playwright/test').Page): Promi
 const MOCK_REPLY = 'Hello! I am a mocked DocQA assistant. (no real LLM was called)';
 
 cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
-  cleanupTest.beforeEach(async ({ page }) => {
+  cleanupTest.beforeEach(async () => {
     await cleanupCrossPageDocs();
   });
 
