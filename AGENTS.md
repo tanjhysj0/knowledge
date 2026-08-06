@@ -28,7 +28,12 @@ AI 自身没有时间感知，无法预估命令执行时长。为彻底消除�
 
 ## Issue 完成后必须执行 `make test`
 
-每一个 Issue 的代码修改完成后，必须执行 `make test` 并确认无错误后方可继续。
+## 工作流程 step
+### 1.完成issue代码的修改
+### 2.执行`make test`确定无误,如有报错需要先修复
+### 3.执行`git commit -m <description>`提交代码
+### 4.关闭对应的issue
+
 
 ## E2E LLM Mock
 
