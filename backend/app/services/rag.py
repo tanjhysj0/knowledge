@@ -1,18 +1,32 @@
+import asyncio
 from typing import List, Dict, Any, AsyncGenerator, Optional
 
 from starlette.requests import Request
 
+from app.services.embedding import get_embedding_provider
 from app.services.vector_store import VectorStoreService
 from app.services.llm import get_llm_provider
 from app.core.config import get_settings
 
 settings = get_settings()
 
+# Milvus COSINE metric 下 ``distance = 1 - cosine_similarity``，越小越相似。
+# 大于该阈值的命中视为不相关、过滤掉（避免把无关文档塞进 prompt）。
 RETRIEVAL_SCORE_THRESHOLD = 0.5
 
 
 class RAGService:
-    """Service for RAG-based question answering. Vector search is disabled (no embedding provider)."""
+    """Service for RAG-based question answering.
+
+    检索链路（#32 真打开）：
+
+    1. :meth:`_search_chunks` 把 ``question`` 送 embedding provider 取 query 向量
+    2. 调 :meth:`VectorStoreService.search` 在 Milvus 中按 cosine 距离召回 top-k
+    3. 用 :data:`RETRIEVAL_SCORE_THRESHOLD` 过滤掉距离过大的"假命中"
+    4. 命中非空时拼 :meth:`_build_rag_prompt`；未命中或检索异常时回退
+       :meth:`_build_external_prompt`（与历史行为兼容）
+    5. ``sources`` 字段按 ``document_id`` 去重，仅返回 ``["doc_<id>", ...]``
+    """
 
     def __init__(self, request: Optional[Request] = None):
         self._vector_store = VectorStoreService()
@@ -51,9 +65,77 @@ Answer:"""
 
 Please answer this question based on your general knowledge."""
 
-    def _search_chunks(self, question: str, document_ids: List[int], top_k: int) -> List[Dict[str, Any]]:
-        """Search for relevant chunks. Returns [] when embeddings are unavailable."""
-        return []  # Vector search disabled (no embedding provider)
+    def _search_chunks(
+        self,
+        question: str,
+        document_ids: List[int],
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
+        """同步检索相关 chunks；空问题 / embedding 失败 / 向量库异常都返回 ``[]``。
+
+        命中会按 :data:`RETRIEVAL_SCORE_THRESHOLD`（COSINE distance）过滤：
+        大于阈值的命中视为"假相关"丢弃。
+        """
+        if not question or not question.strip():
+            return []
+        if not document_ids:
+            # 没有指定文档时仍然检索（按 query 拉 top-k），由调用方决定是否使用
+            pass
+
+        try:
+            provider = get_embedding_provider()
+            query_vectors = provider.embed_texts([question])
+        except Exception:  # noqa: BLE001 — embedding 不可用时静默回退 external
+            return []
+
+        if not query_vectors:
+            return []
+
+        try:
+            raw_hits = self._vector_store.search(
+                query_embedding=query_vectors[0],
+                limit=top_k,
+                document_ids=document_ids or None,
+            )
+        except Exception:  # noqa: BLE001 — 向量库不可用时回退 external
+            return []
+
+        filtered: List[Dict[str, Any]] = []
+        for hit in raw_hits or []:
+            distance = hit.get("distance")
+            if distance is not None and float(distance) > RETRIEVAL_SCORE_THRESHOLD:
+                continue
+            filtered.append(hit)
+        return filtered
+
+    async def _asearch_chunks(
+        self,
+        question: str,
+        document_ids: List[int],
+        top_k: int,
+    ) -> List[Dict[str, Any]]:
+        """异步包装 ``_search_chunks``：把同步阻塞调用丢到默认 executor。
+
+        bge-m3 encode 是 CPU 密集型；直接 await 会阻塞事件循环。后续若
+        embedding provider 暴露 async API，可在此切换。
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._search_chunks, question, document_ids, top_k
+        )
+
+    @staticmethod
+    def _dedupe_sources(search_results: List[Dict[str, Any]]) -> List[str]:
+        """按 ``document_id`` 去重，输出 ``["doc_<id>", ...]``。"""
+        sources: List[str] = []
+        seen: set = set()
+        for result in search_results or []:
+            doc_id = result.get("document_id")
+            if doc_id is None or doc_id in seen:
+                continue
+            seen.add(doc_id)
+            sources.append(f"doc_{doc_id}")
+        return sources
 
     async def answer(
         self,
@@ -62,7 +144,7 @@ Please answer this question based on your general knowledge."""
         top_k: int = 5,
     ) -> Dict[str, Any]:
         """Answer a question using RAG. Returns dict with 'answer', 'sources', 'used_external'."""
-        search_results = self._search_chunks(question, document_ids or [], top_k)
+        search_results = await self._asearch_chunks(question, document_ids or [], top_k)
         used_external = not search_results
 
         prompt = (
@@ -73,17 +155,9 @@ Please answer this question based on your general knowledge."""
         messages = [{"role": "user", "content": prompt}]
         answer_text = await self._llm().chat(messages)
 
-        sources = []
-        seen_docs = set()
-        for result in search_results:
-            doc_id = result.get("document_id")
-            if doc_id and doc_id not in seen_docs:
-                seen_docs.add(doc_id)
-                sources.append(f"doc_{doc_id}")
-
         return {
             "answer": answer_text,
-            "sources": sources,
+            "sources": self._dedupe_sources(search_results),
             "used_external": used_external,
         }
 
@@ -93,8 +167,8 @@ Please answer this question based on your general knowledge."""
         document_ids: List[int] = None,
         top_k: int = 5,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Answer a question with streaming."""
-        search_results = self._search_chunks(question, document_ids or [], top_k)
+        """Answer a question with streaming. Yields ``{chunk, done, sources, error}``."""
+        search_results = await self._asearch_chunks(question, document_ids or [], top_k)
         used_external = not search_results
 
         prompt = (
@@ -104,13 +178,7 @@ Please answer this question based on your general knowledge."""
         )
         messages = [{"role": "user", "content": prompt}]
 
-        sources = []
-        seen_docs = set()
-        for result in search_results:
-            doc_id = result.get("document_id")
-            if doc_id and doc_id not in seen_docs:
-                seen_docs.add(doc_id)
-                sources.append(f"doc_{doc_id}")
+        sources = self._dedupe_sources(search_results)
 
         try:
             full_answer = ""
