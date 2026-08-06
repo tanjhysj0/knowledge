@@ -56,15 +56,34 @@ cleanupTest.describe('Documents Page - E2E', () => {
     // 避免依赖其他测试遗留文档（被并发 cleanupAll 删除导致总页数不稳定）。
     const tag = Date.now();
     const fileInput = page.locator('input[type="file"]');
+    const filenames: string[] = [];
     for (let i = 0; i < 11; i++) {
+      const filename = `pagination-${tag}-${i}.txt`;
+      filenames.push(filename);
       await fileInput.setInputFiles({
-        name: `pagination-${tag}-${i}.txt`,
+        name: filename,
         mimeType: 'text/plain',
         buffer: Buffer.from(`pagination doc ${i}`),
       });
-      await expect(page.locator(`.doc-item-name:has-text("pagination-${tag}-${i}.txt")`)).toBeVisible({ timeout: 5_000 });
-      await uploadedDocs.track(`pagination-${tag}-${i}.txt`);
     }
+    // 通过后端 API 轮询确认全部 11 个文档都已持久化，避免依赖 UI 单页可见性
+    // （DocumentsPage 默认 PAGE_SIZE=10，第 11 个文档会落在第 2 页，UI 上不可见）。
+    const deadline = Date.now() + 30_000;
+    let allPersisted = false;
+    while (Date.now() < deadline) {
+      const items = await listDocumentsViaApi();
+      allPersisted = filenames.every((name) => items.some((item) => item.filename === name));
+      if (allPersisted) break;
+      await page.waitForTimeout(250);
+    }
+    expect(allPersisted).toBeTruthy();
+    for (const filename of filenames) {
+      await uploadedDocs.track(filename);
+    }
+
+    // 刷新页面让 UI 拿到最新数据
+    await page.reload();
+    await page.waitForLoadState('networkidle').catch(() => {});
 
     // 等待分页器出现并确认当前页可翻页
     await expect(page.locator('.pagination')).toBeVisible({ timeout: 10_000 });
@@ -261,10 +280,9 @@ Content for section 2.
     // 前端列表中该文档应消失
     await expect(page.locator(`.doc-item-name:has-text("${filename}")`)).toHaveCount(0, { timeout: 5_000 });
 
-    // 后端也应同步删除（具体文件不存在；总数受并发影响不做严格断言）
+    // 后端也应同步删除（总数受并发 worker 干扰不做严格断言，仅验证目标文档消失）
     const afterDocs = await listDocumentsViaApi();
     expect(afterDocs.find(d => d.filename === filename)).toBeUndefined();
-    expect(afterDocs.length).toBeLessThanOrEqual(beforeDocs.length - 1);
   });
 
   cleanupTest('删除不存在的文档应返回 404', async ({ page }) => {
