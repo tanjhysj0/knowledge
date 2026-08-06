@@ -197,8 +197,10 @@ cleanupTest.describe('Settings Page - True E2E', () => {
   });
 
   cleanupTest('加载时应展示错误或设置内容', async ({ page }) => {
-    // 进入设置页：要么加载失败显示错误，要么成功显示配置
+    // 进入设置页并等待配置请求完成，再验证成功或失败状态
+    const responsePromise = page.waitForResponse('**/api/settings');
     await page.goto('/settings');
+    await responsePromise;
 
     const hasError = await page.locator('text=加载配置失败').isVisible().catch(() => false);
     const hasSettings = await page.locator('text=LLM 配置').isVisible().catch(() => false);

@@ -24,6 +24,51 @@ test.describe('Backend API 契约 - E2E', () => {
     }, message);
   }
 
+  async function postStreamFromBrowser(
+    page: any,
+    message: string,
+    headers: Record<string, string> = {},
+  ): Promise<{ status: number; body: string }> {
+    return await page.evaluate(async ({ msg, requestHeaders }: { msg: string; requestHeaders: Record<string, string> }) => {
+      const res = await fetch('/api/chat/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...requestHeaders },
+        body: JSON.stringify({ message: msg, document_ids: [] }),
+      });
+      return { status: res.status, body: await res.text() };
+    }, { msg: message, requestHeaders: headers });
+  }
+
+  function parseSseEvents(body: string): { event: string; data: unknown }[] {
+    return body.trim().split(/\r?\n\r?\n/).map((block) => {
+      const lines = block.split(/\r?\n/);
+      const event = lines.find((line) => line.startsWith('event: '))?.slice(7);
+      const data = lines.find((line) => line.startsWith('data: '))?.slice(6);
+      expect(event).toBeTruthy();
+      expect(data).toBeTruthy();
+      return { event: event!, data: JSON.parse(data!) };
+    });
+  }
+
+  test('POST /api/chat/stream 应遵守 message 与 done SSE 契约', async ({ page }) => {
+    const response = await postStreamFromBrowser(page, 'stream contract ' + Date.now());
+    expect(response.status).toBe(200);
+
+    const events = parseSseEvents(response.body);
+    const messageEvents = events.filter((item) => item.event === 'message');
+    expect(messageEvents.length).toBeGreaterThan(0);
+    for (const item of messageEvents) {
+      expect(item.data).toEqual(expect.objectContaining({ content: expect.any(String) }));
+    }
+
+    const doneIndex = events.findIndex((item) => item.event === 'done');
+    expect(doneIndex).toBe(events.length - 1);
+    expect(events[doneIndex].data).toEqual(expect.objectContaining({ sources: expect.any(Array) }));
+    expect(messageEvents.map((item) => (item.data as { content: string }).content).join('')).toBe(
+      'Hello! I am a mocked DocQA assistant. (no real LLM was called)',
+    );
+  });
+
   test('POST /api/chat 应返回 ChatResponse 结构', async ({ page }) => {
     const { status, body } = await postChatFromBrowser(page, 'Hello API');
     expect(status).toBe(200);
