@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     milvus_port: int = 19530
     milvus_collection: str = "doc_qa_documents"
 
+    # Embedding（默认 bge-m3 中英多语言 / dim=1024）
+    embedding_provider: str = "local"  # "local" = sentence-transformers
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_dim: int = 1024
+
     # PostgreSQL
     postgres_host: str = "localhost"
     postgres_port: int = 5432
