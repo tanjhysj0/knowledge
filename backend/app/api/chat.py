@@ -1,7 +1,7 @@
 """聊天路由层：仅做 HTTP/SSE 适配、依赖注入和服务调用。"""
 from typing import List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,29 +14,33 @@ router = APIRouter()
 
 @router.post("", response_model=ChatResponse)
 async def chat(
-    request: ChatRequest,
+    request: Request,
+    payload: ChatRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """Non-streaming RAG-based chat endpoint."""
     result = await chat_service.ask(
-        question=request.message,
-        document_ids=request.document_ids,
+        question=payload.message,
+        document_ids=payload.document_ids,
         db=db,
+        request=request,
     )
     return ChatResponse(message=result["answer"], sources=result["sources"])
 
 
 @router.post("/stream")
 async def chat_stream(
-    request: ChatRequest,
+    request: Request,
+    payload: ChatRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """Streaming RAG-based chat with multi-turn context."""
     return EventSourceResponse(
         chat_service.stream_answer(
-            question=request.message,
-            document_ids=request.document_ids,
+            question=payload.message,
+            document_ids=payload.document_ids,
             db=db,
+            request=request,
         )
     )
 

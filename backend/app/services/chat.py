@@ -1,9 +1,10 @@
 """聊天应用服务：单轮问询、流式回答、历史读写。"""
 import json
-from typing import AsyncIterator, Dict, List
+from typing import AsyncIterator, Dict, List, Optional
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
 
 from app.models.document import ChatMessage
 from app.services.rag import RAGService
@@ -25,12 +26,13 @@ async def ask(
     question: str,
     document_ids: List[int],
     db: AsyncSession,
+    request: Optional[Request] = None,
 ) -> Dict[str, object]:
     """调用 RAG 给出单轮答案，并落库 user + assistant 两条 ``ChatMessage``。
 
     返回 ``{"answer": str, "sources": list[str]}``。
     """
-    rag_service = RAGService()
+    rag_service = RAGService(request=request)
     result = await rag_service.answer(
         question=question,
         document_ids=document_ids,
@@ -60,6 +62,7 @@ async def stream_answer(
     question: str,
     document_ids: List[int],
     db: AsyncSession,
+    request: Optional[Request] = None,
 ) -> AsyncIterator[Dict[str, str]]:
     """流式产出 RAG 答案的 SSE 事件，并在流结束后落库 user + assistant 两条 ``ChatMessage``。
 
@@ -97,7 +100,7 @@ async def stream_answer(
         )
         messages = context_messages + [{"role": "user", "content": prompt}]
 
-        rag_service = RAGService()
+        rag_service = RAGService(request=request)
         async for chunk_data in rag_service._llm().stream_chat(messages=messages):
             for kind, segment in splitter.feed(chunk_data):
                 if not segment:

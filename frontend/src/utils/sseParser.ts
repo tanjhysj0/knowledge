@@ -25,14 +25,21 @@ export class SSEParser {
     const events: SSEEvent[] = [];
 
     // SSE spec uses CRLF line endings; tolerate LF-only servers by normalizing
-    // to LF so the boundary delimiter is always \n\n.
+    // to LF so the boundary delimiter is always \n\n. We also normalize the
+    // buffer itself so boundary positions and lengths match the text we slice.
     while (true) {
       const normalized = this.buffer.replace(/\r\n/g, '\n');
       const boundary = normalized.indexOf('\n\n');
       if (boundary === -1) break;
       const record = normalized.slice(0, boundary);
-      const dropped = normalized.length - boundary - 2;
-      this.buffer = this.buffer.slice(this.buffer.length - dropped);
+      // Slice the ORIGINAL (possibly CRLF) buffer at the position corresponding
+      // to the end of the boundary in normalized. We can't reuse `boundary`
+      // directly because each \r\n in the original adds an extra character
+      // vs. the normalized form; counting CRLFs up to `boundary + 2` gives
+      // the exact offset in `this.buffer`.
+      const crlfCount = (normalized.slice(0, boundary + 2).match(/\r\n/g) || []).length;
+      const consumedLength = boundary + 2 + crlfCount;
+      this.buffer = this.buffer.slice(consumedLength);
       const parsed = this.parseRecord(record);
       if (parsed) events.push(parsed);
     }

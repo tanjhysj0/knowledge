@@ -29,3 +29,7 @@ AI 自身没有时间感知，无法预估命令执行时长。为彻底消除�
 ## Issue 完成后必须执行 `make test`
 
 每一个 Issue 的代码修改完成后，必须执行 `make test` 并确认无错误后方可继续。
+
+## E2E LLM Mock
+
+E2E 测试通过 Playwright `extraHTTPHeaders` 注入 `X-E2E-Test`，后端据此切到 `MockLLMProvider`。

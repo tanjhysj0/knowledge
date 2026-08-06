@@ -75,9 +75,10 @@ class TestChatStreamSSE:
 
         with patch("app.services.rag.RAGService._llm") as mock_llm:
             mock_llm.return_value.stream_chat = fake_stream
-            request = ChatRequest(message="Hi", document_ids=document_ids or [])
+            payload = ChatRequest(message="Hi", document_ids=document_ids or [])
             db = _FakeSession()
-            response = await chat_stream(request=request, db=db)
+            request = MagicMock(headers={})
+            response = await chat_stream(request=request, payload=payload, db=db)
             # EventSourceResponse is an object that exposes .body_iterator.
             return await _collect_sse_dicts(response.body_iterator)
 
@@ -142,9 +143,10 @@ class TestChatStreamPersistedContent:
 
         with patch("app.services.rag.RAGService._llm") as mock_llm:
             mock_llm.return_value.stream_chat = fake_stream
-            request = ChatRequest(message="Hello", document_ids=[])
+            payload = ChatRequest(message="Hello", document_ids=[])
             db = _FakeSession()
-            response = await chat_stream(request=request, db=db)
+            request = MagicMock(headers={})
+            response = await chat_stream(request=request, payload=payload, db=db)
             async for _ in response.body_iterator:
                 pass
 

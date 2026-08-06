@@ -1,4 +1,7 @@
-from typing import List, Dict, Any, AsyncGenerator
+from typing import List, Dict, Any, AsyncGenerator, Optional
+
+from starlette.requests import Request
+
 from app.services.vector_store import VectorStoreService
 from app.services.llm import get_llm_provider
 from app.core.config import get_settings
@@ -11,12 +14,19 @@ RETRIEVAL_SCORE_THRESHOLD = 0.5
 class RAGService:
     """Service for RAG-based question answering. Vector search is disabled (no embedding provider)."""
 
-    def __init__(self):
+    def __init__(self, request: Optional[Request] = None):
         self._vector_store = VectorStoreService()
+        self._request = request
 
     def _llm(self):
-        """Resolve the current LLM provider on each call so settings changes take effect."""
-        return get_llm_provider()
+        """Resolve the current LLM provider on each call so settings changes take effect.
+
+        The ``request`` propagated from the API route is forwarded to
+        :func:`get_llm_provider` so the E2E ``X-E2E-Test`` header can swap in
+        :class:`MockLLMProvider` without leaking the FastAPI ``Request`` into
+        the rest of the business logic.
+        """
+        return get_llm_provider(self._request)
 
     def _build_rag_prompt(self, question: str, context_chunks: List[Dict[str, Any]]) -> str:
         if not context_chunks:

@@ -27,6 +27,9 @@ const projects = process.env.E2E_ALL_BROWSERS
 
 export default defineConfig({
   testDir: './e2e',
+  // 全部 E2E 请求统一携带 X-E2E-Test 头部，后端据此返回 MockLLMProvider，
+  // 避免在测试环境调用真实 LLM。
+  globalSetup: './e2e/helpers/globalSetup.ts',
   // 测试并行执行。状态隔离由各 spec 的 beforeEach / afterEach 负责（清 history、清文档、复原 settings）。
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
@@ -40,6 +43,8 @@ export default defineConfig({
     // 单个请求超时 5 秒（保留宽松值，防止 vite 冷启动误杀 click/fill）
     actionTimeout: 5_000,
     navigationTimeout: 5_000,
+    // 所有 browser context 自动附带 X-E2E-Test，让后端切到 MockLLMProvider。
+    extraHTTPHeaders: { 'X-E2E-Test': 'true' },
   },
   // 单个测试用例超时 5 秒（mock 后所有请求都应很快完成；--timeout CLI 可覆盖）
   timeout: 5_000,
