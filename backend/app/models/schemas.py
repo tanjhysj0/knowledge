@@ -50,6 +50,31 @@ class ChatResponse(BaseModel):
     sources: list[str] = []
 
 
+# ----------------- 会话（#34） -----------------
+
+class ConversationBase(BaseModel):
+    """会话 Pydantic 基类，仅作 :class:`ConversationCreate` 的复制定义。"""
+
+    title: Optional[str] = None
+
+
+class ConversationCreate(ConversationBase):
+    """``POST /api/conversations`` 请求体。``title`` 可选；缺省时由后端赋默认值。"""
+
+    pass
+
+
+class ConversationResponse(ConversationBase):
+    """会话响应载荷：返回 id / title / message_count / 时间戳。"""
+
+    id: int
+    message_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class PaginationParams(BaseModel):
     page: int = 1
     page_size: int = 10
