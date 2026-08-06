@@ -299,4 +299,37 @@ test.describe('Chat Page - E2E', () => {
       page.locator(`.message.user .content:has-text("${secondMsg}")`)
     ).toBeVisible({ timeout: 5_000 });
   });
+
+  test('思考内容默认折叠可展开', async ({ page }) => {
+    // Issue #28：通过 X-E2E-Mock-Thinking 让 MockLLMProvider 输出 <think>...</think> 块，
+    // 在不调用真实 LLM 的前提下验证思考折叠 UI。header 由 setExtraHTTPHeaders 合并到
+    // playwright.config 的 extraHTTPHeaders 中，与上下文无关。
+    await page.setExtraHTTPHeaders({ 'X-E2E-Mock-Thinking': 'true' });
+
+    const textarea = page.locator('textarea');
+    const sendButton = page.locator('button:has-text("发送")');
+
+    await textarea.fill('thinking-collapse-' + Date.now());
+    await sendButton.click();
+
+    // 等待本轮助手回复 + 思考区出现（思考 chunk 由 SSE 先到达）
+    const lastAssistant = page.locator('.message.assistant').last();
+    const thinkingSection = lastAssistant.locator('.thinking-section');
+    await expect(thinkingSection).toBeVisible({ timeout: 3_000 });
+
+    // 默认折叠：summary 可见，content 隐藏
+    await expect(thinkingSection.locator('.thinking-summary')).toContainText('思考过程');
+    await expect(thinkingSection.locator('.thinking-content')).toBeHidden();
+
+    // 点击 summary 展开
+    await thinkingSection.locator('.thinking-summary').click();
+
+    // 展开后 content 应可见
+    await expect(thinkingSection.locator('.thinking-content')).toBeVisible();
+
+    // 主回答内容不应包含 think 标签（思考在独立 details 中）
+    const contentText = (await lastAssistant.locator('.content').textContent()) ?? '';
+    expect(contentText).not.toContain('<think>');
+    expect(contentText).not.toContain('</think>');
+  });
 });

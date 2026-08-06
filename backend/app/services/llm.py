@@ -10,8 +10,10 @@ settings = get_settings()
 
 
 E2E_TEST_HEADER = "x-e2e-test"
+E2E_MOCK_THINKING_HEADER = "x-e2e-mock-thinking"
 MOCK_LLM_ANSWER = "Hello! I am a mocked DocQA assistant. (no real LLM was called)"
 MOCK_CHUNK_SIZE = 5
+MOCK_THINKING_PREFIX = "<think>Mock reasoning about the user's question.</think>"
 
 
 class LLMProvider(Protocol):
@@ -170,14 +172,23 @@ class MockLLMProvider:
     fixed string in both ``chat`` and ``stream_chat`` so E2E suites can assert
     on a stable payload without touching the real LLM. RAG retrieval still
     runs against the real backend.
+
+    Pass ``include_thinking=True`` to prepend a synthetic ``<think>...</think>``
+    segment so tests can exercise the thinking-collapse UI without changing the
+    default mock payload for unrelated cases.
     """
+
+    def __init__(self, include_thinking: bool = False) -> None:
+        self._include_thinking = include_thinking
 
     async def chat(
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
     ) -> str:
-        """Return the mock answer verbatim."""
+        """Return the mock answer verbatim, optionally prefixed with thinking."""
+        if self._include_thinking:
+            return MOCK_THINKING_PREFIX + MOCK_LLM_ANSWER
         return MOCK_LLM_ANSWER
 
     async def stream_chat(
@@ -185,7 +196,14 @@ class MockLLMProvider:
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
     ) -> AsyncGenerator[str, None]:
-        """Yield the mock answer in fixed-size chunks to mimic streaming."""
+        """Yield the mock answer in fixed-size chunks to mimic streaming.
+
+        When ``include_thinking`` was set, the first yielded chunk carries the
+        synthetic ``<think>...</think>`` segment so downstream splitting logic
+        emits a ``thinking`` event before the answer chunks.
+        """
+        if self._include_thinking:
+            yield MOCK_THINKING_PREFIX
         answer = MOCK_LLM_ANSWER
         for index in range(0, len(answer), MOCK_CHUNK_SIZE):
             yield answer[index : index + MOCK_CHUNK_SIZE]
@@ -197,10 +215,16 @@ def get_llm_provider(request: Optional[Request] = None) -> LLMProvider:
     When ``request`` carries the ``X-E2E-Test: true`` header, return
     :class:`MockLLMProvider` so E2E suites skip the real LLM call. The
     selection is request-scoped (no caching for the mock branch) so a single
-    process can serve both mock and real traffic safely.
+    process can serve both mock and real traffic safely. The optional
+    ``X-E2E-Mock-Thinking: true`` header further requests that the mock
+    prepend a ``<think>...</think>`` segment for tests that exercise the
+    thinking-collapse UI.
     """
     if request is not None and request.headers.get(E2E_TEST_HEADER, "").lower() == "true":
-        return MockLLMProvider()
+        include_thinking = (
+            request.headers.get(E2E_MOCK_THINKING_HEADER, "").lower() == "true"
+        )
+        return MockLLMProvider(include_thinking=include_thinking)
     provider_type = settings.llm_provider.lower()
     if provider_type == "anthropic":
         return AnthropicProvider()
