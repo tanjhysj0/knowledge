@@ -11,6 +11,7 @@ import pytest
 from app.services import documents as document_service
 from app.services.documents import (
     DocumentChunkError,
+    DocumentEmbeddingError,
     DocumentEmptyError,
     DocumentNotFoundError,
     DocumentParseError,
@@ -121,14 +122,23 @@ class TestUploadDocument:
     async def test_success_persists_metadata_and_invokes_vector_store(self, upload_dir):
         db = _FakeAsyncSession(scalar_value=0)
         chunks = ["chunk one", "chunk two"]
+        fake_embeddings = [[0.1, 0.2], [0.3, 0.4]]
 
         with patch.object(
             document_service.DocumentParser, "parse", return_value="text body"
         ), patch.object(
             document_service.TextChunker, "chunk", return_value=chunks
         ), patch.object(
+            document_service, "get_embedding_provider"
+        ) as mock_get_provider, patch.object(
             document_service.VectorStoreService, "insert"
-        ) as mock_insert:
+        ) as mock_insert, patch.object(
+            document_service.VectorStoreService, "__init__", return_value=None
+        ):
+            mock_provider = MagicMock()
+            mock_provider.embed_texts = MagicMock(return_value=fake_embeddings)
+            mock_get_provider.return_value = mock_provider
+
             document = await upload_document(
                 filename="hello.txt",
                 file_ext="txt",
@@ -143,10 +153,13 @@ class TestUploadDocument:
         assert db.commits == 1
         assert db.refreshes == [document]
         assert (upload_dir / "hello.txt").read_bytes() == b"hello bytes"
+        # 验证 embedding provider 被调用，且 chunks 原样下传
+        mock_provider.embed_texts.assert_called_once_with(chunks)
+        # 验证 insert 收到真 embeddings（不是空 list）
         mock_insert.assert_called_once_with(
             document_id=document.id,
             chunks=chunks,
-            embeddings=[[]] * len(chunks),
+            embeddings=fake_embeddings,
         )
 
     @pytest.mark.asyncio
@@ -215,29 +228,72 @@ class TestUploadDocument:
                 )
 
     @pytest.mark.asyncio
-    async def test_vector_store_failure_is_swallowed(self, upload_dir):
+    async def test_embedding_provider_failure_raises_service_error(self, upload_dir):
+        """``embed_texts`` 抛异常时必须以 ``DocumentEmbeddingError`` 向上抛（#31）。"""
         db = _FakeAsyncSession()
-        chunks = ["c1"]
+        chunks = ["c1", "c2"]
 
         with patch.object(
             document_service.DocumentParser, "parse", return_value="text"
         ), patch.object(
             document_service.TextChunker, "chunk", return_value=chunks
         ), patch.object(
+            document_service, "get_embedding_provider"
+        ) as mock_get_provider, patch.object(
+            document_service.VectorStoreService, "insert"
+        ) as mock_insert:
+            mock_provider = MagicMock()
+            mock_provider.embed_texts = MagicMock(
+                side_effect=RuntimeError("model down")
+            )
+            mock_get_provider.return_value = mock_provider
+
+            with pytest.raises(DocumentEmbeddingError) as exc:
+                await upload_document(
+                    filename="ok.txt",
+                    file_ext="txt",
+                    content=b"text",
+                    db=db,
+                )
+
+        assert "model down" in str(exc.value)
+        # metadata 仍然落库（PG commit 已发生）；向量库未被调用
+        assert db.commits == 1
+        mock_insert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_vector_store_insert_failure_raises_service_error(self, upload_dir):
+        """``vector_store.insert`` 抛异常时也必须冒泡（#31）。"""
+        db = _FakeAsyncSession()
+        chunks = ["c1"]
+        fake_embeddings = [[0.5, 0.6]]
+
+        with patch.object(
+            document_service.DocumentParser, "parse", return_value="text"
+        ), patch.object(
+            document_service.TextChunker, "chunk", return_value=chunks
+        ), patch.object(
+            document_service, "get_embedding_provider"
+        ) as mock_get_provider, patch.object(
+            document_service.VectorStoreService, "__init__", return_value=None
+        ), patch.object(
             document_service.VectorStoreService,
             "insert",
             side_effect=RuntimeError("milvus down"),
         ):
-            document = await upload_document(
-                filename="ok.txt",
-                file_ext="txt",
-                content=b"text",
-                db=db,
-            )
+            mock_provider = MagicMock()
+            mock_provider.embed_texts = MagicMock(return_value=fake_embeddings)
+            mock_get_provider.return_value = mock_provider
 
-        # 元数据依然落库成功，向量库异常被静默忽略（既有契约）。
-        assert document.id == 1
-        assert db.commits == 1
+            with pytest.raises(DocumentEmbeddingError) as exc:
+                await upload_document(
+                    filename="ok.txt",
+                    file_ext="txt",
+                    content=b"text",
+                    db=db,
+                )
+
+        assert "milvus down" in str(exc.value)
 
 
 class TestListDocuments:

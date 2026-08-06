@@ -9,6 +9,7 @@ from app.core.config import get_settings
 from app.models.document import Document
 from app.models.schemas import DocumentResponse, PaginatedDocumentsResponse
 from app.services.chunker import TextChunker
+from app.services.embedding import get_embedding_provider
 from app.services.parser import DocumentParser
 from app.services.vector_store import VectorStoreService
 
@@ -33,6 +34,10 @@ class DocumentEmptyError(DocumentServiceError):
 
 class DocumentChunkError(DocumentServiceError):
     """文档分块失败。"""
+
+
+class DocumentEmbeddingError(DocumentServiceError):
+    """生成 embedding 或写入向量库失败。"""
 
 
 async def upload_document(
@@ -76,16 +81,28 @@ async def upload_document(
     await db.commit()
     await db.refresh(document)
 
-    # 向量存储为可选步骤：失败时静默忽略，沿用既有契约（#31 单独修复）。
+    # 向量化：先 embed 再写 Milvus。embedding/向量库异常向上抛转为 5xx（#31）。
+    try:
+        embedding_provider = get_embedding_provider()
+        # embed_texts 是同步 CPU 密集型；放在线程池避免阻塞事件循环。
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        embeddings = await loop.run_in_executor(
+            None, embedding_provider.embed_texts, chunks
+        )
+    except Exception as exc:  # noqa: BLE001 — 翻译为业务异常
+        raise DocumentEmbeddingError(f"Failed to generate embeddings: {exc}") from exc
+
     try:
         vector_store = VectorStoreService()
         vector_store.insert(
             document_id=document.id,
             chunks=chunks,
-            embeddings=[[]] * len(chunks),
+            embeddings=embeddings,
         )
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — 翻译为业务异常
+        raise DocumentEmbeddingError(f"Failed to insert into vector store: {exc}") from exc
 
     return document
 
