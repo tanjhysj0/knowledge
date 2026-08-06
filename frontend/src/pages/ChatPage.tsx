@@ -220,7 +220,9 @@ export default function ChatPage() {
         {isLoading && (
           <div className="message assistant">
             <div className="role">AI</div>
-            <div className="content typing-indicator">
+            {/* typing-indicator 不使用 .content 类，避免与 .message.assistant .content
+                selector 在 SSE 流期间产生歧义；保留 .typing-indicator 类以供 observer 检测 */}
+            <div className="typing-indicator">
               <span></span>
               <span></span>
               <span></span>
