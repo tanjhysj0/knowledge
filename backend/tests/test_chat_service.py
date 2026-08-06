@@ -6,13 +6,14 @@ deterministically. Mirrors the ``test_documents_service.py`` pattern from #38.
 """
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.services import chat as chat_service
 from app.services.chat import ask, chat_history, stream_answer
 from app.services.llm import reset_providers
+from app.services.rag import RAGService
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +21,19 @@ def reset_provider_instances():
     reset_providers()
     yield
     reset_providers()
+
+
+@pytest.fixture(autouse=True)
+def mock_rag_retrieve():
+    """默认让 :meth:`RAGService.aretrieve` 返回 ``[]``。
+
+    测试不需要真加载 bge-m3（#32）。需要在命中场景下造数据的测试
+    （如 :class:`TestAsk`）会显式 mock ``aretrieve`` 覆盖本 fixture。
+    """
+    with patch.object(
+        RAGService, "aretrieve", new=AsyncMock(return_value=[]), create=True
+    ):
+        yield
 
 
 class _FakeScalars:
@@ -91,11 +105,19 @@ class TestAsk:
     @pytest.mark.asyncio
     async def test_returns_answer_and_sources_from_rag(self):
         db = _FakeAsyncSession()
-        rag_result = {"answer": "Hello back", "sources": ["doc_1"], "used_external": True}
+        # chat.py:ask 现在显式调 RAGService.aretrieve + RAGService._llm().chat，
+        # 不再调 RAGService.answer（#32 + #33 重构）。
+        fake_hits = [{"document_id": 1, "chunk_index": 0, "content": "ctx", "distance": 0.1}]
+        fake_llm = MagicMock()
+        fake_llm.chat = AsyncMock(return_value="Hello back")
 
         with patch.object(chat_service, "RAGService") as MockRAG:
             mock_instance = MockRAG.return_value
-            mock_instance.answer = AsyncMock(return_value=rag_result)
+            mock_instance.aretrieve = AsyncMock(return_value=fake_hits)
+            mock_instance._llm = MagicMock(return_value=fake_llm)
+            mock_instance._build_rag_prompt = MagicMock(return_value="RAG PROMPT")
+            mock_instance._build_external_prompt = MagicMock(return_value="EXT PROMPT")
+            mock_instance._dedupe_sources = RAGService._dedupe_sources  # 用真实实现
 
             result = await ask(
                 question="Hi",
@@ -104,17 +126,31 @@ class TestAsk:
             )
 
         assert result == {"answer": "Hello back", "sources": ["doc_1"]}
-        mock_instance.answer.assert_called_once_with(
+        mock_instance.aretrieve.assert_called_once_with(
             question="Hi", document_ids=[1], top_k=5
         )
+        # 命中时使用 RAG prompt
+        mock_instance._build_rag_prompt.assert_called_once()
+        mock_instance._build_external_prompt.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_persists_user_and_assistant_rows_with_doc_ids(self):
         db = _FakeAsyncSession()
-        rag_result = {"answer": "Answer text", "sources": ["doc_2", "doc_3"], "used_external": False}
+        fake_hits = [
+            {"document_id": 2, "chunk_index": 0, "content": "x", "distance": 0.1},
+            {"document_id": 3, "chunk_index": 0, "content": "y", "distance": 0.2},
+        ]
+        fake_llm = MagicMock()
+        fake_llm.chat = AsyncMock(return_value="Answer text")
 
         with patch.object(chat_service, "RAGService") as MockRAG:
-            MockRAG.return_value.answer = AsyncMock(return_value=rag_result)
+            mock_instance = MockRAG.return_value
+            mock_instance.aretrieve = AsyncMock(return_value=fake_hits)
+            mock_instance._llm = MagicMock(return_value=fake_llm)
+            mock_instance._build_rag_prompt = MagicMock(return_value="RAG PROMPT")
+            mock_instance._build_external_prompt = MagicMock(return_value="EXT PROMPT")
+            mock_instance._dedupe_sources = RAGService._dedupe_sources
+
             await ask(
                 question="Question",
                 document_ids=[2, 3],
@@ -137,10 +173,18 @@ class TestAsk:
     @pytest.mark.asyncio
     async def test_handles_empty_document_ids(self):
         db = _FakeAsyncSession()
-        rag_result = {"answer": "x", "sources": [], "used_external": True}
+        # 空 doc_ids 时 aretrieve 返回 []，回退 external prompt
+        fake_llm = MagicMock()
+        fake_llm.chat = AsyncMock(return_value="x")
 
         with patch.object(chat_service, "RAGService") as MockRAG:
-            MockRAG.return_value.answer = AsyncMock(return_value=rag_result)
+            mock_instance = MockRAG.return_value
+            mock_instance.aretrieve = AsyncMock(return_value=[])
+            mock_instance._llm = MagicMock(return_value=fake_llm)
+            mock_instance._build_rag_prompt = MagicMock(return_value="RAG PROMPT")
+            mock_instance._build_external_prompt = MagicMock(return_value="EXT PROMPT")
+            mock_instance._dedupe_sources = RAGService._dedupe_sources
+
             await ask(
                 question="Q",
                 document_ids=[],
@@ -151,6 +195,9 @@ class TestAsk:
         assistants = [obj for obj in db.added if obj.role == "assistant"]
         assert users[0].document_ids is None
         assert assistants[0].document_ids is None
+        # 未命中 → external prompt
+        mock_instance._build_external_prompt.assert_called_once()
+        mock_instance._build_rag_prompt.assert_not_called()
 
 
 class TestStreamAnswerHappyPath:

@@ -137,6 +137,19 @@ Please answer this question based on your general knowledge."""
             sources.append(f"doc_{doc_id}")
         return sources
 
+    async def aretrieve(
+        self,
+        question: str,
+        document_ids: List[int],
+        top_k: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """公开的检索入口：返回原始命中 dict 列表（与 :meth:`_asearch_chunks` 等价）。
+
+        供 :mod:`app.services.chat` 在拼装 prompt 前调用，以便 SSE ``done``
+        事件能携带 sources；不在本方法内做 prompt 构造 / LLM 调用。
+        """
+        return await self._asearch_chunks(question, document_ids, top_k)
+
     async def answer(
         self,
         question: str,

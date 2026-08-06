@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.api.chat import chat_stream
 from app.models.schemas import ChatRequest
 from app.services.llm import reset_providers
+from app.services.rag import RAGService
 
 
 @pytest.fixture(autouse=True)
@@ -18,6 +19,19 @@ def reset_provider_instances():
     reset_providers()
     yield
     reset_providers()
+
+
+@pytest.fixture(autouse=True)
+def mock_rag_retrieve():
+    """默认让 :meth:`RAGService.aretrieve` 返回 ``[]``。
+
+    test_chat_stream 通过 ``/api/chat/stream`` endpoint 调真 ``stream_answer``，
+    不需要真加载 bge-m3（#32）。命中场景的测试可以显式 patch 覆盖。
+    """
+    with patch.object(
+        RAGService, "aretrieve", new=AsyncMock(return_value=[]), create=True
+    ):
+        yield
 
 
 async def _collect_sse_dicts(generator):

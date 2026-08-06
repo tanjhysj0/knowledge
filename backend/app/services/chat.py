@@ -33,11 +33,23 @@ async def ask(
     返回 ``{"answer": str, "sources": list[str]}``。
     """
     rag_service = RAGService(request=request)
-    result = await rag_service.answer(
+    # 先检索：拿 sources 与 prompt 构造依据（#32 + #33）
+    search_results = await rag_service.aretrieve(
         question=question,
         document_ids=document_ids,
         top_k=5,
     )
+    sources = rag_service._dedupe_sources(search_results)
+    used_external = not search_results
+
+    if used_external:
+        answer_text = await rag_service._llm().chat(
+            messages=[{"role": "user", "content": rag_service._build_external_prompt(question)}]
+        )
+    else:
+        answer_text = await rag_service._llm().chat(
+            messages=[{"role": "user", "content": rag_service._build_rag_prompt(question, search_results)}]
+        )
 
     db.add(
         ChatMessage(
@@ -49,13 +61,13 @@ async def ask(
     db.add(
         ChatMessage(
             role="assistant",
-            content=result["answer"],
-            document_ids=_join_doc_ids(result["sources"]),
+            content=answer_text,
+            document_ids=_join_doc_ids(sources),
         )
     )
     await db.commit()
 
-    return {"answer": result["answer"], "sources": result["sources"]}
+    return {"answer": answer_text, "sources": sources}
 
 
 async def stream_answer(
@@ -93,14 +105,22 @@ async def stream_answer(
 
         context_messages.append({"role": "user", "content": question})
 
-        # Streaming answer; RAG retrieval is disabled (no embedding provider)
-        prompt = (
-            f"Question: {question}\n\n"
-            "Please answer this question based on your general knowledge."
+        rag_service = RAGService(request=request)
+        # 先检索拿 sources + prompt 构造依据（#32 + #33）。
+        search_results = await rag_service.aretrieve(
+            question=question,
+            document_ids=document_ids,
+            top_k=5,
         )
+        sources = rag_service._dedupe_sources(search_results)
+        used_external = not search_results
+
+        if used_external:
+            prompt = rag_service._build_external_prompt(question)
+        else:
+            prompt = rag_service._build_rag_prompt(question, search_results)
         messages = context_messages + [{"role": "user", "content": prompt}]
 
-        rag_service = RAGService(request=request)
         async for chunk_data in rag_service._llm().stream_chat(messages=messages):
             for kind, segment in splitter.feed(chunk_data):
                 if not segment:

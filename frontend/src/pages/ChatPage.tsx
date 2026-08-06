@@ -9,6 +9,15 @@ interface ChatMessage {
   role: string;
   content: string;
   thinking?: string;
+  /** RAG 检索命中的文档来源列表（#33），如 ``["doc_1", "doc_3"]``。空数组 / undefined = 未命中。 */
+  sources?: string[];
+}
+
+/** 把 ``doc_<id>`` 解析为 ``<id>`` 整数（无效 token 返回 null）。 */
+function parseDocId(token: string): number | null {
+  if (!token.startsWith('doc_')) return null;
+  const id = Number(token.slice(4));
+  return Number.isInteger(id) && id > 0 ? id : null;
 }
 
 export default function ChatPage() {
@@ -113,7 +122,10 @@ export default function ChatPage() {
       const decoder = new TextDecoder();
       const parser = new SSEParser();
       const assistantId = Date.now() + 1;
-      setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '' }]);
+      setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '', sources: [] }]);
+
+      // 累积本轮的 sources（SSE done 事件一次性下发），用 ref 避免闭包陈旧
+      const sourcesRef: { current: string[] } = { current: [] };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -126,39 +138,76 @@ export default function ChatPage() {
               if (m.id !== assistantId) return m;
               let { content, thinking } = m;
               for (const ev of events) {
-                const payload = ev.data as { content?: string } | null;
-                const piece = payload?.content;
-                if (typeof piece !== 'string' || piece.length === 0) continue;
-                if (ev.event === 'thinking') {
-                  thinking = (thinking || '') + piece;
-                } else if (ev.event === 'message') {
-                  content += piece;
+                const payload = ev.data as
+                  | { content?: string; sources?: string[] }
+                  | null;
+                if (ev.event === 'thinking' || ev.event === 'message') {
+                  const piece = payload?.content;
+                  if (typeof piece !== 'string' || piece.length === 0) continue;
+                  if (ev.event === 'thinking') {
+                    thinking = (thinking || '') + piece;
+                  } else {
+                    content += piece;
+                  }
+                } else if (ev.event === 'done') {
+                  // done 事件携带 sources（#33）；保留后端顺序
+                  const incoming = Array.isArray(payload?.sources)
+                    ? Array.from(
+                        new Set(
+                          (payload!.sources as unknown[]).filter(
+                            (s): s is string => typeof s === 'string'
+                          )
+                        )
+                      )
+                    : [];
+                  if (incoming.length > 0) {
+                    sourcesRef.current = incoming;
+                  }
                 } else if (ev.event === 'error') {
                   throw new Error(payload?.content?.toString() || '模型返回错误');
                 }
               }
-              return { ...m, content, thinking };
+              return { ...m, content, thinking, sources: sourcesRef.current };
             })
           );
         }
       }
 
       for (const ev of parser.end()) {
-        const payload = ev.data as { content?: string } | null;
-        const piece = payload?.content;
-        if (typeof piece !== 'string' || piece.length === 0) continue;
-        setMessages((prev) =>
-          prev.map((m) => {
-            if (m.id !== assistantId) return m;
-            if (ev.event === 'thinking') {
-              return { ...m, thinking: (m.thinking || '') + piece };
-            }
-            if (ev.event === 'message') {
+        const payload = ev.data as
+          | { content?: string; sources?: string[] }
+          | null;
+        if (ev.event === 'thinking' || ev.event === 'message') {
+          const piece = payload?.content;
+          if (typeof piece !== 'string' || piece.length === 0) continue;
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== assistantId) return m;
+              if (ev.event === 'thinking') {
+                return { ...m, thinking: (m.thinking || '') + piece };
+              }
               return { ...m, content: m.content + piece };
-            }
-            return m;
-          })
-        );
+            })
+          );
+        } else if (ev.event === 'done') {
+          const incoming = Array.isArray(payload?.sources)
+            ? Array.from(
+                new Set(
+                  (payload!.sources as unknown[]).filter(
+                    (s): s is string => typeof s === 'string'
+                  )
+                )
+              )
+            : [];
+          if (incoming.length > 0) {
+            sourcesRef.current = incoming;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, sources: sourcesRef.current } : m
+              )
+            );
+          }
+        }
       }
     } catch (err: any) {
       setError(err.message || '发送消息失败');
@@ -214,6 +263,40 @@ export default function ChatPage() {
               </details>
             )}
             <div className="content">{msg.content}</div>
+            {msg.role === 'assistant' &&
+              Array.isArray(msg.sources) &&
+              msg.sources.length > 0 && (
+                <div
+                  className="sources"
+                  data-testid={`message-sources-${msg.id}`}
+                  aria-label="参考文档来源"
+                >
+                  <div className="sources-label">参考来源：</div>
+                  <ul className="sources-list">
+                    {msg.sources.map((token, idx) => {
+                      const docId = parseDocId(token);
+                      const doc = docId !== null
+                        ? documents.find((d) => d.id === docId)
+                        : undefined;
+                      const label = doc ? doc.filename : token;
+                      const chunks = doc?.chunk_count;
+                      return (
+                        <li
+                          key={`${token}-${idx}`}
+                          className="sources-item"
+                          data-testid={`source-item-${token}`}
+                          title={label}
+                        >
+                          <span className="sources-name">{label}</span>
+                          {chunks !== undefined && (
+                            <span className="sources-chunks"> · {chunks} 段</span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
           </div>
         ))}
 
