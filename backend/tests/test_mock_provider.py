@@ -3,14 +3,13 @@ from unittest.mock import patch
 
 import pytest
 
-from app.services.llm import (
+from app.services.llm import OpenAIProvider, get_llm_provider
+from app.services.mock_llm import (
     E2E_MOCK_THINKING_HEADER,
     MOCK_CHUNK_SIZE,
     MOCK_LLM_ANSWER,
     MOCK_THINKING_PREFIX,
     MockLLMProvider,
-    OpenAIProvider,
-    get_llm_provider,
 )
 from app.services.rag import RAGService
 

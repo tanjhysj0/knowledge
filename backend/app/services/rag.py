@@ -37,8 +37,8 @@ class RAGService:
 
         The ``request`` propagated from the API route is forwarded to
         :func:`get_llm_provider` so the E2E ``X-E2E-Test`` header can swap in
-        :class:`MockLLMProvider` without leaking the FastAPI ``Request`` into
-        the rest of the business logic.
+        :class:`app.services.mock_llm.MockLLMProvider` without leaking the
+        FastAPI ``Request`` into the rest of the business logic.
         """
         return get_llm_provider(self._request)
 
