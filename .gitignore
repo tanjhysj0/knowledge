@@ -18,6 +18,7 @@ package-lock.json
 
 # Vite
 *.local
+*.tsbuildinfo
 
 # Environment - only ignore backend/.env, keep .env.example
 backend/.env

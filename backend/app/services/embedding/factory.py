@@ -8,18 +8,23 @@ import threading
 from typing import Optional
 
 from app.core.config import get_settings
+from app.services.embedding.base import EmbeddingProvider
 from app.services.embedding.local import LocalSentenceTransformerProvider
 
-_provider_instance: Optional[LocalSentenceTransformerProvider] = None
+_provider_instance: Optional[EmbeddingProvider] = None
 _provider_lock = threading.Lock()
 
 
-def get_embedding_provider() -> LocalSentenceTransformerProvider:
+def get_embedding_provider() -> EmbeddingProvider:
     """返回当前配置的 embedding provider 单例。
 
-    当前唯一实现是 :class:`LocalSentenceTransformerProvider`；后续如需远端
-    实现（例如 OpenAI text-embedding-3），可在此处按 ``settings.embedding_provider``
-    派发，与 :func:`app.services.llm.get_llm_provider` 的派发方式保持一致。
+    通过 ``settings.embedding_provider`` 派发：
+
+    - ``"mock"`` 返回 :class:`app.services.embedding.mock.MockEmbeddingProvider`，
+      用于 E2E 测试避免加载 bge-m3。
+    - ``"local"``（默认）返回 :class:`LocalSentenceTransformerProvider`。
+
+    如需新增远端实现（例如 OpenAI text-embedding-3），在此处追加分支即可。
     """
     global _provider_instance
     if _provider_instance is None:
@@ -28,10 +33,18 @@ def get_embedding_provider() -> LocalSentenceTransformerProvider:
                 # 在锁内读 settings 以保证单例参数与最近一次 ``reset_embedding_provider``
                 # 之后的状态一致。
                 settings = get_settings()
-                _provider_instance = LocalSentenceTransformerProvider(
-                    model_name=settings.embedding_model,
-                    dim=settings.embedding_dim,
-                )
+                if settings.embedding_provider == "mock":
+                    from app.services.embedding.mock import MockEmbeddingProvider
+
+                    _provider_instance = MockEmbeddingProvider(
+                        model_name=settings.embedding_model,
+                        dim=settings.embedding_dim,
+                    )
+                else:
+                    _provider_instance = LocalSentenceTransformerProvider(
+                        model_name=settings.embedding_model,
+                        dim=settings.embedding_dim,
+                    )
     return _provider_instance
 
 

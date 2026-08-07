@@ -75,6 +75,11 @@ Please answer this question based on your general knowledge."""
 
         命中会按 :data:`RETRIEVAL_SCORE_THRESHOLD`（COSINE distance）过滤：
         大于阈值的命中视为"假相关"丢弃。
+
+        mock embedding provider（见 :class:`app.services.embedding.mock`）返回全
+        零向量，在 Milvus COSINE metric 下会触发距离=0 的误命中。该场景
+        （``provider.is_mock`` 为真）下直接短路为空，避免污染 RAG prompt 与
+        ``sources``。
         """
         if not question or not question.strip():
             return []
@@ -84,6 +89,11 @@ Please answer this question based on your general knowledge."""
 
         try:
             provider = get_embedding_provider()
+            # mock provider 短路：避免零向量在 Milvus 触发误命中。
+            # 用严格 ``is True`` 判断，避免 ``MagicMock().is_mock`` 返回
+            # 另一个 ``MagicMock``（真值）在单测里误命中短路。
+            if getattr(provider, "is_mock", False) is True:
+                return []
             query_vectors = provider.embed_texts([question])
         except Exception:  # noqa: BLE001 — embedding 不可用时静默回退 external
             return []
