@@ -321,9 +321,13 @@ cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
     '删除已上传文档 → ChatPage selector 中应移除该文档且请求不再携带其 id',
     async ({ page, uploadedDocs }) => {
       const filename = `cross-page-rag-delete-${Date.now()}.md`;
+      // 额外上传一个"诱饵"文档，避免删除目标后 totalCount=0 导致
+      // ChatPage 隐藏 context-toggle（页面只在有文档时才渲染选择入口）。
+      const decoyFilename = `cross-page-rag-decoy-${Date.now()}.md`;
       await page.goto('/documents');
       await page.waitForSelector('.upload-zone');
-      await page.locator('input[type="file"]').setInputFiles({
+      const fileInput = page.locator('input[type="file"]');
+      await fileInput.setInputFiles({
         name: filename,
         mimeType: 'text/markdown',
         buffer: Buffer.from(`# Delete Me\n\n${KEYWORD}`),
@@ -331,23 +335,40 @@ cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
       await expect(
         page.locator(`.doc-item-name:has-text("${filename}")`)
       ).toBeVisible({ timeout: 5_000 });
+      await fileInput.setInputFiles({
+        name: decoyFilename,
+        mimeType: 'text/markdown',
+        buffer: Buffer.from(`# Decoy\n\n${KEYWORD}`),
+      });
+      await expect(
+        page.locator(`.doc-item-name:has-text("${decoyFilename}")`)
+      ).toBeVisible({ timeout: 5_000 });
       let docId: number | undefined;
+      let decoyDocId: number | undefined;
       for (let i = 0; i < 20; i++) {
         const docs = await listDocuments();
         const found = docs.find((d) => d.filename === filename);
-        if (found) {
+        const decoy = docs.find((d) => d.filename === decoyFilename);
+        if (found && decoy) {
           docId = found.id;
+          decoyDocId = decoy.id;
           break;
         }
         await page.waitForTimeout(250);
       }
       expect(docId).toBeDefined();
+      expect(decoyDocId).toBeDefined();
       await uploadedDocs.track(filename);
+      await uploadedDocs.track(decoyFilename);
 
       await goToChatAndWaitDocs(page);
       await page.locator('[data-testid="context-toggle"]').click();
       const checkbox = page.locator(`[data-testid="document-checkbox-${docId}"]`);
       await expect(checkbox).toBeVisible({ timeout: 15_000 });
+      // 诱饵文档的 checkbox 也应可见（确保 totalCount >= 2）
+      await expect(
+        page.locator(`[data-testid="document-checkbox-${decoyDocId}"]`)
+      ).toBeVisible({ timeout: 15_000 });
 
       const delCtx = await apiRequest.newContext({ baseURL: BACKEND_BASE });
       const delRes = await delCtx.delete(`/api/documents/${docId}`);
@@ -365,9 +386,13 @@ cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
       await expect(toggle).toBeVisible({ timeout: 10_000 });
       await toggle.click();
 
+      // 被删的 checkbox 必须不存在；诱饵文档仍存在以保证 toggle 可见
       await expect(
         page.locator(`[data-testid="document-checkbox-${docId}"]`)
       ).toHaveCount(0, { timeout: 5_000 });
+      await expect(
+        page.locator(`[data-testid="document-checkbox-${decoyDocId}"]`)
+      ).toBeVisible({ timeout: 5_000 });
 
       const reqPromise = page.waitForRequest(
         (req) => req.url().includes('/api/chat/stream'),
