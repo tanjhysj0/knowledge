@@ -9,6 +9,7 @@ from app.models.schemas import (
     ChatMessageResponse,
     ConversationCreate,
     ConversationResponse,
+    ConversationUpdate,
 )
 from app.services import conversations as conversation_service
 
@@ -47,6 +48,22 @@ async def delete_conversation(
     except conversation_service.ConversationNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"message": "Conversation deleted"}
+
+
+@router.patch("/{conversation_id}", response_model=ConversationResponse)
+async def update_conversation(
+    conversation_id: int,
+    payload: ConversationUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """更新会话属性（当前仅支持 ``title``，#35 使用）。"""
+    try:
+        conv = await conversation_service.update_conversation(
+            db=db, conversation_id=conversation_id, title=payload.title
+        )
+    except conversation_service.ConversationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return conv
 
 
 @router.get(

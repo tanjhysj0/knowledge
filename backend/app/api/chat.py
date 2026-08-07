@@ -22,6 +22,7 @@ async def chat(
     result = await chat_service.ask(
         question=payload.message,
         document_ids=payload.document_ids,
+        conversation_id=payload.conversation_id,
         db=db,
         request=request,
     )
@@ -39,6 +40,7 @@ async def chat_stream(
         chat_service.stream_answer(
             question=payload.message,
             document_ids=payload.document_ids,
+            conversation_id=payload.conversation_id,
             db=db,
             request=request,
         )

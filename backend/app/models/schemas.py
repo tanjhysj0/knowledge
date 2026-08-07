@@ -43,6 +43,9 @@ class ChatMessageResponse(ChatMessageBase):
 class ChatRequest(BaseModel):
     message: str
     document_ids: list[int] = []
+    # #35 + #34 集成：发消息时携带会话 id，chat.py 会写入 ``ChatMessage.conversation_id``。
+    # reload / 切换会话时通过 ``GET /api/conversations/{id}/messages`` 恢复历史。
+    conversation_id: Optional[int] = None
 
 
 class ChatResponse(BaseModel):
@@ -62,6 +65,15 @@ class ConversationCreate(ConversationBase):
     """``POST /api/conversations`` 请求体。``title`` 可选；缺省时由后端赋默认值。"""
 
     pass
+
+
+class ConversationUpdate(BaseModel):
+    """``PATCH /api/conversations/{id}`` 请求体（#35）。
+
+    全部字段可选；未提供的字段保持不变。
+    """
+
+    title: Optional[str] = None
 
 
 class ConversationResponse(ConversationBase):

@@ -27,6 +27,7 @@ async def ask(
     document_ids: List[int],
     db: AsyncSession,
     request: Optional[Request] = None,
+    conversation_id: Optional[int] = None,
 ) -> Dict[str, object]:
     """调用 RAG 给出单轮答案，并落库 user + assistant 两条 ``ChatMessage``。
 
@@ -56,6 +57,7 @@ async def ask(
             role="user",
             content=question,
             document_ids=_join_doc_ids(document_ids),
+            conversation_id=conversation_id,
         )
     )
     db.add(
@@ -63,6 +65,7 @@ async def ask(
             role="assistant",
             content=answer_text,
             document_ids=_join_doc_ids(sources),
+            conversation_id=conversation_id,
         )
     )
     await db.commit()
@@ -75,6 +78,7 @@ async def stream_answer(
     document_ids: List[int],
     db: AsyncSession,
     request: Optional[Request] = None,
+    conversation_id: Optional[int] = None,
 ) -> AsyncIterator[Dict[str, str]]:
     """流式产出 RAG 答案的 SSE 事件，并在流结束后落库 user + assistant 两条 ``ChatMessage``。
 
@@ -99,6 +103,7 @@ async def stream_answer(
             role="user",
             content=question,
             document_ids=_join_doc_ids(document_ids),
+            conversation_id=conversation_id,
         )
         db.add(user_msg)
         await db.flush()
@@ -156,6 +161,7 @@ async def stream_answer(
             role="assistant",
             content=full_answer,
             document_ids=_join_doc_ids(sources),
+            conversation_id=conversation_id,
         )
         db.add(assistant_msg)
         await db.flush()

@@ -62,6 +62,22 @@ async def get_conversation(db: AsyncSession, conversation_id: int) -> Conversati
     return conv
 
 
+async def update_conversation(
+    db: AsyncSession, conversation_id: int, title: Optional[str]
+) -> Conversation:
+    """更新会话属性（当前仅支持 ``title``，#35 使用）。
+
+    ``title`` 为 ``None`` 时视为不修改（保留现状），空字符串 / 纯空白
+    则回落到 :data:`_DEFAULT_TITLE`。
+    """
+    conv = await get_conversation(db, conversation_id)
+    if title is not None:
+        conv.title = _normalize_title(title)
+    await db.commit()
+    await db.refresh(conv)
+    return conv
+
+
 async def delete_conversation(db: AsyncSession, conversation_id: int) -> None:
     """删除会话本身；其下消息由 ``ChatMessage.conversation_id`` 的
     ``ON DELETE CASCADE`` 外键约定清理（SQLAlchemy 需要 DB 支持）。

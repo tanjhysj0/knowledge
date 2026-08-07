@@ -57,3 +57,20 @@ export interface SettingsUpdate {
   llm_base_url?: string;
   llm_model?: string;
 }
+
+// 会话（#34 / #35）
+export interface Conversation {
+  id: number;
+  title: string | null;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConversationCreate {
+  title?: string;
+}
+
+export interface ConversationUpdate {
+  title?: string;
+}

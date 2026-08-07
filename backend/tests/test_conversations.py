@@ -18,6 +18,7 @@ from app.services.conversations import (
     list_conversations,
     list_messages,
     touch_conversation,
+    update_conversation,
 )
 
 
@@ -246,6 +247,38 @@ async def test_touch_conversation_silently_noop_for_missing():
     assert db.commits == 0
 
 
+@pytest.mark.asyncio
+async def test_update_conversation_changes_title():
+    conv = _make_conv(11, title="old")
+    db = _FakeAsyncSession(conversations=[conv])
+    updated = await update_conversation(db, 11, title="new")
+    assert updated.title == "new"
+    assert updated.id == 11
+
+
+@pytest.mark.asyncio
+async def test_update_conversation_blank_title_falls_back_to_default():
+    conv = _make_conv(12, title="x")
+    db = _FakeAsyncSession(conversations=[conv])
+    updated = await update_conversation(db, 12, title="   ")
+    assert updated.title == "新对话"
+
+
+@pytest.mark.asyncio
+async def test_update_conversation_none_title_noop():
+    conv = _make_conv(13, title="untouched")
+    db = _FakeAsyncSession(conversations=[conv])
+    updated = await update_conversation(db, 13, title=None)
+    assert updated.title == "untouched"
+
+
+@pytest.mark.asyncio
+async def test_update_conversation_raises_when_missing():
+    db = _FakeAsyncSession()
+    with pytest.raises(ConversationNotFoundError):
+        await update_conversation(db, 999, title="x")
+
+
 # ---------------------------------------------------------------------------
 # 路由层契约（FastAPI TestClient）
 # ---------------------------------------------------------------------------
@@ -263,7 +296,9 @@ def test_conversation_endpoints_registered_via_app():
     assert "/api/conversations" in paths
     assert {"get", "post"} <= {m.lower() for m in paths["/api/conversations"]}
     assert "/api/conversations/{conversation_id}" in paths
-    assert "delete" in {m.lower() for m in paths["/api/conversations/{conversation_id}"]}
+    assert {"delete", "patch"} <= {
+        m.lower() for m in paths["/api/conversations/{conversation_id}"]
+    }
     assert "/api/conversations/{conversation_id}/messages" in paths
     assert "get" in {
         m.lower()
@@ -280,3 +315,15 @@ async def test_create_via_service_layer_returns_model_instance(monkeypatch):
     assert db.commits == 1
     assert conv.title == "规划"
     assert conv.id > 0
+
+
+@pytest.mark.asyncio
+async def test_patch_endpoint_registered_via_app():
+    from fastapi import FastAPI
+
+    from app.api.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    paths = app.openapi()["paths"]
+    assert "patch" in {m.lower() for m in paths["/api/conversations/{conversation_id}"]}

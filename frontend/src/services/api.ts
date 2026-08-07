@@ -1,5 +1,16 @@
 import axios from 'axios';
-import type { Document, ChatMessage, ChatRequest, PaginatedDocumentsResponse, UploadProgress, SettingsResponse, SettingsUpdate } from '../types';
+import type {
+  Document,
+  ChatMessage,
+  ChatRequest,
+  Conversation,
+  ConversationCreate,
+  ConversationUpdate,
+  PaginatedDocumentsResponse,
+  UploadProgress,
+  SettingsResponse,
+  SettingsUpdate,
+} from '../types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -49,6 +60,31 @@ export const chatApi = {
 
   history: async (): Promise<ChatMessage[]> => {
     const response = await api.get<ChatMessage[]>('/chat/history');
+    return response.data;
+  },
+};
+
+export const conversationApi = {
+  list: async (): Promise<Conversation[]> => {
+    const response = await api.get<Conversation[]>('/conversations');
+    return response.data;
+  },
+  create: async (payload: ConversationCreate = {}): Promise<Conversation> => {
+    const response = await api.post<Conversation>('/conversations', payload);
+    return response.data;
+  },
+  remove: async (id: number): Promise<void> => {
+    await api.delete(`/conversations/${id}`);
+  },
+  messages: async (id: number): Promise<ChatMessage[]> => {
+    const response = await api.get<ChatMessage[]>(`/conversations/${id}/messages`);
+    return response.data;
+  },
+  update: async (id: number, payload: ConversationUpdate): Promise<Conversation> => {
+    const response = await api.patch<Conversation>(
+      `/conversations/${id}`,
+      payload
+    );
     return response.data;
   },
 };

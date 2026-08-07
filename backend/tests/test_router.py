@@ -20,7 +20,7 @@ EXPECTED_METHODS = {
     "/api/chat/stream": {"POST"},
     "/api/chat/history": {"GET"},
     "/api/conversations": {"GET", "POST"},
-    "/api/conversations/{conversation_id}": {"DELETE"},
+    "/api/conversations/{conversation_id}": {"DELETE", "PATCH"},
     "/api/conversations/{conversation_id}/messages": {"GET"},
     "/api/settings": {"GET", "PUT"},
 }
