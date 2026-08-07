@@ -1,6 +1,7 @@
 """Unit tests for Pydantic schemas."""
 import pytest
 from datetime import datetime
+from pydantic import ValidationError
 from app.models.schemas import (
     DocumentBase,
     DocumentCreate,
@@ -99,14 +100,24 @@ class TestChatSchemas:
         assert msg.created_at == now
 
     def test_chat_request_valid(self):
-        req = ChatRequest(message="What is RAG?")
+        # #36：conversation_id 必填
+        req = ChatRequest(message="What is RAG?", conversation_id=1)
         assert req.message == "What is RAG?"
         assert req.document_ids == []
+        assert req.conversation_id == 1
 
     def test_chat_request_with_document_ids(self):
-        req = ChatRequest(message="Search docs", document_ids=[1, 2, 3])
+        req = ChatRequest(
+            message="Search docs", document_ids=[1, 2, 3], conversation_id=7
+        )
         assert req.message == "Search docs"
         assert req.document_ids == [1, 2, 3]
+        assert req.conversation_id == 7
+
+    def test_chat_request_missing_conversation_id_rejected(self):
+        """#36：未传 ``conversation_id`` 必须 422，由 Pydantic 拦截。"""
+        with pytest.raises(ValidationError):
+            ChatRequest(message="x", document_ids=[])
 
     def test_chat_response_valid(self):
         resp = ChatResponse(message="RAG is retrieval-augmented generation")

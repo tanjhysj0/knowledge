@@ -57,11 +57,6 @@ export const chatApi = {
     });
     return response.data;
   },
-
-  history: async (): Promise<ChatMessage[]> => {
-    const response = await api.get<ChatMessage[]>('/chat/history');
-    return response.data;
-  },
 };
 
 export const conversationApi = {

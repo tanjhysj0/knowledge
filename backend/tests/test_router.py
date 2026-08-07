@@ -18,7 +18,7 @@ EXPECTED_METHODS = {
     "/api/documents/{document_id}": {"DELETE"},
     "/api/chat": {"POST"},
     "/api/chat/stream": {"POST"},
-    "/api/chat/history": {"GET"},
+    # #36：全量 /api/chat/history 废除，统一走 /api/conversations/{id}/messages
     "/api/conversations": {"GET", "POST"},
     "/api/conversations/{conversation_id}": {"DELETE", "PATCH"},
     "/api/conversations/{conversation_id}/messages": {"GET"},

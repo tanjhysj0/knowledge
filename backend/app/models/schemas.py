@@ -43,9 +43,10 @@ class ChatMessageResponse(ChatMessageBase):
 class ChatRequest(BaseModel):
     message: str
     document_ids: list[int] = []
-    # #35 + #34 集成：发消息时携带会话 id，chat.py 会写入 ``ChatMessage.conversation_id``。
-    # reload / 切换会话时通过 ``GET /api/conversations/{id}/messages`` 恢复历史。
-    conversation_id: Optional[int] = None
+    # #36：会话上下文隔离 - 不传 conversation_id 会被 Pydantic 拒绝 (422)，
+    # 传错的 ID 会被 chat.py 校验为 404。多轮上下文严格仅走该会话的消息历史，
+    # 不再扫全表。
+    conversation_id: int
 
 
 class ChatResponse(BaseModel):

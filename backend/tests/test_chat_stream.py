@@ -48,8 +48,10 @@ async def _collect_sse_dicts(generator):
 class _FakeSession:
     """Minimal AsyncSession stand-in used as the chat_stream db dependency."""
 
-    def __init__(self):
+    def __init__(self, conversations=None, missing_conversation_ids=None):
         self.added: list = []
+        self._conversations = conversations or []
+        self._missing_conv_ids = set(missing_conversation_ids or [])
 
     def add(self, obj):
         self.added.append(obj)
@@ -59,7 +61,27 @@ class _FakeSession:
             if getattr(obj, "id", None) is None:
                 obj.id = len(self.added)
 
-    async def execute(self, *_args, **_kwargs):
+    async def execute(self, statement):
+        from sqlalchemy.sql import Select
+
+        if isinstance(statement, Select):
+            compiled = statement.compile()
+            params = dict(compiled.params)
+            sql = str(statement).lower()
+            if "from conversations" in sql:
+                conv_id = next(iter(params.values()), None)
+                if conv_id is not None:
+                    if conv_id in self._missing_conv_ids:
+                        return _EmptyResult(value=None)
+                    conv = next(
+                        (c for c in self._conversations if c.id == conv_id),
+                        None,
+                    )
+                    if conv is not None and not hasattr(conv, "updated_at"):
+                        from datetime import datetime as _dt
+                        conv.updated_at = _dt.utcnow()
+                    return _EmptyResult(value=conv)
+                return _EmptyResult(value=None)
         return _EmptyResult()
 
     async def commit(self):
@@ -70,8 +92,14 @@ class _FakeSession:
 
 
 class _EmptyResult:
+    def __init__(self, *, value=None):
+        self._value = value
+
     def scalars(self):
         return _EmptyScalars()
+
+    def scalar_one_or_none(self):
+        return self._value
 
 
 class _EmptyScalars:
@@ -82,15 +110,21 @@ class _EmptyScalars:
 class TestChatStreamSSE:
     """Verifies that /api/chat/stream emits a clean SSE stream."""
 
-    async def _drive(self, llm_chunks, document_ids=None):
+    async def _drive(self, llm_chunks, document_ids=None, conversation_id=99):
         async def fake_stream(messages):
             for chunk in llm_chunks:
                 yield chunk
 
         with patch("app.services.rag.RAGService._llm") as mock_llm:
             mock_llm.return_value.stream_chat = fake_stream
-            payload = ChatRequest(message="Hi", document_ids=document_ids or [])
-            db = _FakeSession()
+            payload = ChatRequest(
+                message="Hi", document_ids=document_ids or [],
+                conversation_id=conversation_id,
+            )
+            from types import SimpleNamespace
+            db = _FakeSession(
+                conversations=[SimpleNamespace(id=conversation_id, message_count=0)]
+            )
             request = MagicMock(headers={})
             response = await chat_stream(request=request, payload=payload, db=db)
             # EventSourceResponse is an object that exposes .body_iterator.
@@ -157,8 +191,11 @@ class TestChatStreamPersistedContent:
 
         with patch("app.services.rag.RAGService._llm") as mock_llm:
             mock_llm.return_value.stream_chat = fake_stream
-            payload = ChatRequest(message="Hello", document_ids=[])
-            db = _FakeSession()
+            payload = ChatRequest(message="Hello", document_ids=[], conversation_id=99)
+            from types import SimpleNamespace
+            db = _FakeSession(
+                conversations=[SimpleNamespace(id=99, message_count=0)]
+            )
             request = MagicMock(headers={})
             response = await chat_stream(request=request, payload=payload, db=db)
             async for _ in response.body_iterator:
