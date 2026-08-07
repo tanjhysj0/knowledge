@@ -50,6 +50,11 @@ services:
       start_period: 90s
       timeout: 5s
       retries: 5
+    # #34 修正：宿主 backend Python 客户端默认走 localhost:19530，
+    # 之前 milvus-standalone 只挂上 bridge 网络、不暴露端口，导致文档上传
+    # （embeddings 写入向量库）连不上 Milvus。补上端口映射后后端可直接连接。
+    ports:
+      - "19530:19530"
     depends_on:
       - milvus-etcd
       - milvus-minio

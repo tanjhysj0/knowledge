@@ -45,5 +45,15 @@ async def init_db():
         engine = get_engine()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # 轻量内联迁移（#34）：生产环境为 PostgreSQL，
+            # ``ADD COLUMN IF NOT EXISTS`` 允许表已存在时安全补齐。
+            await conn.exec_driver_sql(
+                "ALTER TABLE chat_messages "
+                "ADD COLUMN IF NOT EXISTS conversation_id INTEGER"
+            )
+            await conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_chat_messages_conversation_id "
+                "ON chat_messages (conversation_id)"
+            )
     except Exception as e:
         print(f"Database initialization skipped: {e}")
