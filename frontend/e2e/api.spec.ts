@@ -13,30 +13,69 @@ test.describe('Backend API 契约 - E2E', () => {
 
   // 从浏览器端发起请求，从而能让后端 MockLLMProvider 命中（X-E2E-Test Header
   // 由 playwright.config 的 extraHTTPHeaders 注入）。
-  async function postChatFromBrowser(page: any, message: string): Promise<any> {
-    return await page.evaluate(async (msg: string) => {
-      const res = await fetch('/api/chat', {
+  // #36：ChatRequest.conversation_id 必填；创建临时会话作为隔离载体。
+  async function createConversation(page: any): Promise<number> {
+    const result = await page.evaluate(async () => {
+      // 必须发送 Content-Type + 非空 body，否则 FastAPI 会以 422 拒绝
+      // （“Field required”，即使 ConversationCreate 所有字段均可选）。
+      const res = await fetch('/api/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg, document_ids: [] }),
+        body: JSON.stringify({}),
       });
       return { status: res.status, body: await res.json() };
-    }, message);
+    });
+    if (result.status !== 200) {
+      throw new Error(`createConversation failed: ${result.status} ${JSON.stringify(result.body)}`);
+    }
+    return result.body.id as number;
+  }
+
+  async function deleteConversation(page: any, id: number): Promise<void> {
+    await page.request.delete(`/api/conversations/${id}`).catch(() => {});
+  }
+
+  async function postChatFromBrowser(page: any, message: string, conversationId?: number): Promise<any> {
+    const convId = conversationId ?? (await createConversation(page));
+    try {
+      return await page.evaluate(
+        async ({ msg, convId }: { msg: string; convId: number }) => {
+          const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: msg, document_ids: [], conversation_id: convId }),
+          });
+          return { status: res.status, body: await res.json() };
+        },
+        { msg: message, convId }
+      );
+    } finally {
+      if (conversationId === undefined) await deleteConversation(page, convId);
+    }
   }
 
   async function postStreamFromBrowser(
     page: any,
     message: string,
     headers: Record<string, string> = {},
+    conversationId?: number
   ): Promise<{ status: number; body: string }> {
-    return await page.evaluate(async ({ msg, requestHeaders }: { msg: string; requestHeaders: Record<string, string> }) => {
-      const res = await fetch('/api/chat/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...requestHeaders },
-        body: JSON.stringify({ message: msg, document_ids: [] }),
-      });
-      return { status: res.status, body: await res.text() };
-    }, { msg: message, requestHeaders: headers });
+    const convId = conversationId ?? (await createConversation(page));
+    try {
+      return await page.evaluate(
+        async ({ msg, requestHeaders, convId }: { msg: string; requestHeaders: Record<string, string>; convId: number }) => {
+          const res = await fetch('/api/chat/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...requestHeaders },
+            body: JSON.stringify({ message: msg, document_ids: [], conversation_id: convId }),
+          });
+          return { status: res.status, body: await res.text() };
+        },
+        { msg: message, requestHeaders: headers, convId }
+      );
+    } finally {
+      if (conversationId === undefined) await deleteConversation(page, convId);
+    }
   }
 
   function parseSseEvents(body: string): { event: string; data: unknown }[] {
@@ -94,7 +133,8 @@ test.describe('Backend API 契约 - E2E', () => {
   });
 
   test('POST /api/chat 应返回 ChatResponse 结构', async ({ page }) => {
-    const { status, body } = await postChatFromBrowser(page, 'Hello API');
+    const convId = await createConversation(page);
+    const { status, body } = await postChatFromBrowser(page, 'Hello API', convId);
     expect(status).toBe(200);
     expect(body).toHaveProperty('message');
     expect(typeof body.message).toBe('string');
@@ -102,19 +142,23 @@ test.describe('Backend API 契约 - E2E', () => {
     expect(Array.isArray(body.sources)).toBeTruthy();
   });
 
-  test('GET /api/chat/history 应返回消息数组', async ({ page }) => {
-    await postChatFromBrowser(page, 'history seed ' + Date.now());
-
-    const res = await page.request.get('/api/chat/history');
-    expect(res.ok()).toBeTruthy();
-    const history = await res.json();
-    expect(Array.isArray(history)).toBeTruthy();
-
-    for (const m of history) {
-      expect(m).toHaveProperty('id');
-      expect(m).toHaveProperty('role');
-      expect(m).toHaveProperty('content');
-      expect(m).toHaveProperty('created_at');
+  test('GET /api/conversations/{id}/messages 应返回该会话消息数组', async ({ page }) => {
+    const convId = await createConversation(page);
+    try {
+      await postChatFromBrowser(page, 'messages seed ' + Date.now(), convId);
+      const res = await page.request.get(`/api/conversations/${convId}/messages`);
+      expect(res.ok()).toBeTruthy();
+      const messages = await res.json();
+      expect(Array.isArray(messages)).toBeTruthy();
+      expect(messages.length).toBeGreaterThan(0);
+      for (const m of messages) {
+        expect(m).toHaveProperty('id');
+        expect(m).toHaveProperty('role');
+        expect(m).toHaveProperty('content');
+        expect(m).toHaveProperty('created_at');
+      }
+    } finally {
+      await deleteConversation(page, convId);
     }
   });
 

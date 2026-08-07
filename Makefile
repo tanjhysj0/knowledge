@@ -31,9 +31,14 @@ test: unit-test e2e-test
 unit-test:
 	cd backend && python3 -m pytest tests/ -v --cov=app --cov-report=term-missing
 
-# Run frontend E2E tests
+# Run frontend E2E tests (Playwright)
+# 默认串行（--workers=1）以避免跨文件会话/文档状态污染。如需开启并行可
+# 用 `make test E2E_WORKERS=N`。
+ifndef E2E_WORKERS
+E2E_WORKERS := 1
+endif
 e2e-test:
-	cd frontend && npx playwright test
+	cd frontend && npx playwright test --workers=$(E2E_WORKERS)
 
 # Start docker-compose services (for E2E tests)
 services-up:

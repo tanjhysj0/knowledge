@@ -31,7 +31,7 @@ async function listDocuments(): Promise<{ id: number; filename: string }[]> {
 // 本 spec 串行执行，避免清理与上传操作互相竞争。
 cleanupTest.describe.configure({ mode: 'serial' });
 
-// 清理本 spec 运行留下的文档。
+// 清理本 spec 运行留下的文档（只清除本 spec 产生的 cross-page-rag-*）。
 async function cleanupCrossPageDocs(): Promise<void> {
   const docs = await listDocuments();
   const ctx = await apiRequest.newContext({ baseURL: BACKEND_BASE });

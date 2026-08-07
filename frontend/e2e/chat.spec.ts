@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 test.describe('Chat Page - E2E', () => {
   // 后端通过 X-E2E-Test Header 自动返回 MockLLMProvider；前端不再额外拦截。
@@ -14,6 +14,23 @@ test.describe('Chat Page - E2E', () => {
     await page.waitForLoadState('networkidle').catch(() => {});
     // 等待聊天页输入框渲染
     await page.waitForSelector('textarea');
+    // #36：跨文件并行（conversation-isolation / conversation-sidebar）会
+    // 通过 API 删/建会话干扰 React state。若列表为空 reload，让 ChatPage
+    // useEffect 自动建一个新会话，保证 activeConvId 一定有效。不主动
+    // DELETE 所有会话以避免 beforeEach 超时（7个测试串行下 5s 不得）
+    const res = await page.request.get('/api/conversations');
+    if (res.ok()) {
+      const list: Array<{ id: number }> = await res.json();
+      if (list.length === 0) {
+        await page.reload();
+        await page.waitForSelector('textarea');
+        await page.waitForLoadState('networkidle').catch(() => {});
+      }
+    }
+    // 保证进入首个发送前 React state 已有 active conv：
+    await expect(
+      page.locator('[data-testid^="conversation-item-"][data-active="true"]')
+    ).toHaveCount(1, { timeout: 5_000 });
   });
 
   test('应展示页面标题与聊天区', async ({ page }) => {
