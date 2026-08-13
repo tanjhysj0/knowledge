@@ -260,7 +260,7 @@
   white-space: nowrap;
 }
 
-/* #63：处理状态徽标（待处理/处理中/已完成/失败） */
+/* #63：处理状态徽标（排队中/处理中/就绪/失败） */
 .doc-status {
   display: inline-block;
   margin-left: 8px;
@@ -289,6 +289,36 @@
 .doc-status-failed {
   background: #ffebee;
   color: #c62828;
+}
+
+/* #64：索引处理进度条（status=processing 时展示） */
+.doc-item-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  max-width: 240px;
+}
+
+.doc-progress-track {
+  flex: 1;
+  height: 6px;
+  background: #e0e0e0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.doc-progress-fill {
+  height: 100%;
+  background: #1976d2;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.doc-progress-percent {
+  font-size: 11px;
+  color: #1565c0;
+  white-space: nowrap;
 }
 
 /* #63：索引失败原因（status=failed 时展示） */

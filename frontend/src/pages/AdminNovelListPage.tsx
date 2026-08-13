@@ -13,11 +13,11 @@ import { formatDate, formatFileSize, getDisplayTitle } from '../utils/format';
 
 const PAGE_SIZE = 10;
 
-/** #63：处理状态 → 中文标签与徽标样式。 */
+/** #64：处理状态 → 中文标签与徽标样式（排队中/处理中/就绪/失败）。 */
 const STATUS_LABELS: Record<Document['status'], string> = {
-  pending: '待处理',
+  pending: '排队中',
   processing: '处理中',
-  ready: '已完成',
+  ready: '就绪',
   failed: '失败',
 };
 
@@ -33,16 +33,16 @@ function CoverThumb({ doc }: { doc: Document }) {
   );
 }
 
-/** #63：处理状态徽标；pending/processing 附进度百分比。 */
+/** #64：处理状态徽标；processing 附进度百分比（进度条另在行内展示）。 */
 function StatusBadge({ doc }: { doc: Document }) {
-  const isUnfinished = doc.status === 'pending' || doc.status === 'processing';
+  const percent = doc.status === 'processing' ? ` ${doc.progress ?? 0}%` : '';
   return (
     <span
       className={`doc-status doc-status-${doc.status}`}
       data-testid="doc-status-badge"
     >
       {STATUS_LABELS[doc.status] ?? doc.status}
-      {isUnfinished ? ` ${doc.progress ?? 0}%` : ''}
+      {percent}
     </span>
   );
 }
@@ -131,6 +131,19 @@ function NovelList({ onEdit }: { onEdit: (doc: Document) => void }) {
                   <span>{formatDate(doc.created_at)}</span>
                   <span>.{doc.file_type.toUpperCase()}</span>
                 </div>
+                {/* #64：processing 展示进度条与百分比，随轮询递增。 */}
+                {doc.status === 'processing' && (
+                  <div className="doc-item-progress" data-testid="doc-progress-bar">
+                    <div className="doc-progress-track">
+                      <div
+                        className="doc-progress-fill"
+                        data-testid="doc-progress-fill"
+                        style={{ width: `${doc.progress ?? 0}%` }}
+                      />
+                    </div>
+                    <span className="doc-progress-percent">{doc.progress ?? 0}%</span>
+                  </div>
+                )}
                 {doc.status === 'failed' && doc.error_message && (
                   <div className="doc-item-error" data-testid="doc-error-message">
                     {doc.error_message}
