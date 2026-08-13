@@ -1,5 +1,6 @@
 """统一 API 路由入口的架构与契约测试。"""
 import ast
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -32,6 +33,10 @@ EXPECTED_METHODS = {
     "/api/settings": {"GET", "PUT"},
     # #45：聊天页 preflight 用的 LLM 可用性端点
     "/api/llm/status": {"GET"},
+    # #68：模型列表 CRUD 五端点
+    "/api/models": {"GET", "POST"},
+    "/api/models/{model_id}": {"DELETE", "PUT"},
+    "/api/models/{model_id}/default": {"PUT"},
 }
 
 
@@ -132,43 +137,80 @@ def test_settings_service_reads_selected_provider(monkeypatch):
 
 
 class _FakeSettingsDb:
-    """settings 服务所需的最小假 db Session（记录 upsert 语句与 commit）。"""
+    """settings 服务所需的最小假 db Session（#68 队列式：按序弹出结果）。"""
 
-    def __init__(self, row=None):
-        self._row = row
+    def __init__(self, specs=None):
+        self._specs = list(specs or [])
         self.executed = []
         self.commits = 0
+        self.added = []
 
     async def execute(self, statement):
         self.executed.append(statement)
+        spec = self._specs.pop(0) if self._specs else {}
         result = MagicMock()
-        result.scalar_one_or_none.return_value = self._row
+        result.scalar_one_or_none.return_value = spec.get("scalar")
+        result.scalars.return_value.all.return_value = spec.get("rows", [])
         return result
+
+    def add(self, row):
+        if row.id is None:
+            row.id = len(self.added) + 1
+        if row.created_at is None:
+            row.created_at = datetime(2026, 8, 1)
+        if row.updated_at is None:
+            row.updated_at = datetime(2026, 8, 1)
+        self.added.append(row)
 
     async def commit(self):
         self.commits += 1
 
+    async def refresh(self, row):
+        return None
+
 
 @pytest.mark.asyncio
 async def test_settings_service_updates_selected_provider(monkeypatch):
+    """#68：显式切换 provider 且无对应记录 → 新建默认记录并同步内存。"""
+    from app.models.llm_model import LLMModel
+
     settings = Settings(llm_provider="openai", anthropic_api_key="old-key")
     reset_calls: list[bool] = []
     monkeypatch.setattr(settings_service, "get_settings", lambda: settings)
     monkeypatch.setattr(
         settings_service, "reset_providers", lambda: reset_calls.append(True)
     )
-    db = _FakeSettingsDb()
+    post = LLMModel(
+        id=1,
+        provider_type="anthropic",
+        api_key="new-secret",
+        base_url="",
+        model_name="new-model",
+        is_default=True,
+        created_at=None,
+        updated_at=None,
+    )
+    db = _FakeSettingsDb(
+        specs=[
+            {"rows": []},  # update 前列表
+            {"rows": []},  # create_model 内空列表校验
+            {},  # create_model 内加锁
+            {},  # create_model 内降级
+            {"rows": [post]},  # load 重载
+        ]
+    )
     update = SettingsUpdate(
         llm_provider="anthropic", llm_api_key="new-secret", llm_model="new-model"
     )
 
     response = await settings_service.update_llm_settings(db=db, update=update)
 
+    assert settings.llm_provider == "anthropic"
     assert settings.anthropic_api_key == "new-secret"
     assert settings.anthropic_model == "new-model"
     assert response.settings.llm.provider == "anthropic"
     assert response.message == "Settings updated and providers reinitialized"
     assert reset_calls == [True]
-    # #67：双写 DB——单行 upsert 落库。
-    assert db.commits == 1
-    assert len(db.executed) == 1
+    assert len(db.added) == 1
+    assert db.added[0].provider_type == "anthropic"
+    assert db.commits >= 1

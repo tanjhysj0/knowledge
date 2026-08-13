@@ -10,7 +10,11 @@ from app.services.documents import (
     process_document_index,
     recover_stale_processing_documents,
 )
-from app.services.settings import load_llm_settings_from_db, reset_llm_memory
+from app.services.settings import (
+    load_llm_settings_from_db,
+    migrate_legacy_settings,
+    reset_llm_memory,
+)
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -46,11 +50,13 @@ async def _recover_indexing() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    # #67：DB 是 LLM 配置唯一事实源，启动时恢复到内存单例；
+    # #67/#68：DB 是 LLM 配置唯一事实源；先执行旧 settings 单行 →
+    # llm_models 的一次性迁移（#68），再把模型列表恢复到内存单例；
     # 失败不影响启动，但也不回退到环境变量：显式置为未配置。
     try:
         session_maker = get_session_maker()
         async with session_maker() as db:
+            await migrate_legacy_settings(db)
             await load_llm_settings_from_db(db)
     except Exception as exc:
         reset_llm_memory()

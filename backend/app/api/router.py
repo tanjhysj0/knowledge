@@ -1,7 +1,16 @@
 """统一 API 路由聚合入口。"""
 from fastapi import APIRouter
 
-from app.api import chat, conversations, covers, documents, health, llm_status, settings
+from app.api import (
+    chat,
+    conversations,
+    covers,
+    documents,
+    health,
+    llm_status,
+    models,
+    settings,
+)
 
 
 router = APIRouter()
@@ -16,4 +25,5 @@ router.include_router(
     conversations.router, prefix="/api/conversations", tags=["conversations"]
 )
 router.include_router(settings.router, tags=["settings"])
+router.include_router(models.router, tags=["models"])
 router.include_router(llm_status.router, tags=["llm"])

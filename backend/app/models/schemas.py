@@ -145,6 +145,44 @@ class SettingsUpdateResponse(BaseModel):
     settings: SettingsResponse
 
 
+# ----------------- 模型列表（#68） -----------------
+
+class LLMModelCreate(BaseModel):
+    """``POST /api/models`` 请求体。列表为空时 ``is_default`` 必须为 true。"""
+
+    provider_type: Literal["openai", "anthropic"]
+    base_url: str = Field(default="", max_length=512)
+    model_name: str = Field(default="", max_length=255)
+    api_key: str = Field(default="", max_length=512)
+    is_default: bool = False
+
+
+class LLMModelUpdate(BaseModel):
+    """``PUT /api/models/{id}`` 请求体。
+
+    全部字段可选；``api_key`` 留空（缺省或空串）表示保持原值。
+    默认切换不在此端点（走 ``PUT /api/models/{id}/default``）。
+    """
+
+    provider_type: Optional[Literal["openai", "anthropic"]] = None
+    base_url: Optional[str] = Field(default=None, max_length=512)
+    model_name: Optional[str] = Field(default=None, max_length=255)
+    api_key: Optional[str] = Field(default=None, max_length=512)
+
+
+class LLMModelResponse(BaseModel):
+    """模型记录响应：``api_key`` 脱敏为 ``api_key_masked``。"""
+
+    id: int
+    provider_type: str
+    base_url: str
+    model_name: str
+    api_key_masked: str
+    is_default: bool
+    created_at: datetime
+    updated_at: datetime
+
+
 # #45：聊天页 preflight 用的 LLM 可用性状态。
 class LLMStatusResponse(BaseModel):
     """``GET /api/llm/status`` 的响应载荷。``reason`` 在 ``configured=True`` 时为空串。"""

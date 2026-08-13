@@ -13,6 +13,9 @@ from app.models.schemas import (
     ChatResponse,
     PaginationParams,
     PaginatedDocumentsResponse,
+    LLMModelCreate,
+    LLMModelResponse,
+    LLMModelUpdate,
     LLMSettings,
     SettingsResponse,
     SettingsUpdate,
@@ -275,6 +278,56 @@ class TestPaginationSchemas:
         assert resp.total == 10
         assert resp.page == 1
         assert resp.total_pages == 4
+
+
+class TestLLMModelSchemas:
+    """#68：模型列表 schema。"""
+
+    def test_llm_model_create_defaults(self):
+        payload = LLMModelCreate(provider_type="openai")
+        assert payload.base_url == ""
+        assert payload.model_name == ""
+        assert payload.api_key == ""
+        assert payload.is_default is False
+
+    def test_llm_model_create_rejects_unknown_provider(self):
+        with pytest.raises(ValidationError):
+            LLMModelCreate(provider_type="azure")
+
+    def test_llm_model_create_rejects_oversized_fields(self):
+        """超长字段在 API 层拒绝（422），而不是打到 DB 列长限制（500）。"""
+        with pytest.raises(ValidationError):
+            LLMModelCreate(provider_type="openai", base_url="x" * 513)
+        with pytest.raises(ValidationError):
+            LLMModelCreate(provider_type="openai", model_name="x" * 256)
+        with pytest.raises(ValidationError):
+            LLMModelCreate(provider_type="openai", api_key="x" * 513)
+
+    def test_llm_model_update_all_optional(self):
+        payload = LLMModelUpdate()
+        assert payload.provider_type is None
+        assert payload.api_key is None
+
+    def test_llm_model_update_blank_api_key_allowed(self):
+        """api_key 空串合法（语义=保持原值，由服务层解释）。"""
+        payload = LLMModelUpdate(api_key="")
+        assert payload.api_key == ""
+
+    def test_llm_model_response_roundtrip(self):
+        now = datetime(2026, 8, 1)
+        response = LLMModelResponse(
+            id=1,
+            provider_type="openai",
+            base_url="https://openai.example",
+            model_name="gpt-test",
+            api_key_masked="sk-o...1234",
+            is_default=True,
+            created_at=now,
+            updated_at=now,
+        )
+        assert response.id == 1
+        assert response.is_default is True
+        assert response.api_key_masked == "sk-o...1234"
 
 
 class TestSettingsSchemas:
