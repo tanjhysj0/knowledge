@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { conversationApi, documentApi, llmStatusApi } from '../services/api';
 import type { ChatMessage as ApiChatMessage, Conversation, Document } from '../types';
 import { SSEParser } from '../utils/sseParser';
+import { getDisplayTitle } from '../utils/format';
 import '../App.css';
 
 /** #45 聊天页输入区上方的 LLM 异常 banner。 */
@@ -44,7 +45,21 @@ function summarizeTitle(text: string): string {
   return trimmed.slice(0, 20) + '…';
 }
 
+/** #51：把 ``doc`` 路由参数解析为合法小说 id（无参 / 非法返回 null）。 */
+function parseFocusedDocId(param: string | null): number | null {
+  if (param === null) return null;
+  const id = Number(param);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
 export default function ChatPage() {
+  // #51：路由聚焦单小说（/chat?doc=<id>）。null = 无参访问，保持默认全选。
+  const [searchParams] = useSearchParams();
+  const focusedDocId = parseFocusedDocId(searchParams.get('doc'));
+  // StrictMode 下挂载 effect 会执行两次：聚焦/自动建会话路径各用 ref 防止
+  // 重复创建（两次 list 都在首条 create 落地前发出，都会看到空列表）。
+  const focusedConvCreatedRef = useRef(false);
+  const autoConvCreatedRef = useRef(false);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const [selectorOpen, setSelectorOpen] = useState(false);
@@ -87,17 +102,24 @@ export default function ChatPage() {
     };
   }, []);
 
-  // 加载可用文档与会话列表（#35）。
+  // 加载可用文档与会话列表（#35）。#51 聚焦参数只在挂载时确定一次——
+  // 首页卡片跳转 /chat?doc=<id> 必然重新挂载，无需响应同路由参数变化。
   useEffect(() => {
     documentApi.list(1, 100)
       .then((res) => {
         setDocuments(res.items);
-        // 默认全选新加载的文档
-        setSelectedIds((prev) => {
-          const next = new Set(prev);
-          for (const d of res.items) next.add(d.id);
-          return next;
-        });
+        if (focusedDocId !== null) {
+          // #51 路由聚焦：文档上下文只选中这本小说（不再默认全选）。
+          const exists = res.items.some((d) => d.id === focusedDocId);
+          setSelectedIds(exists ? new Set([focusedDocId]) : new Set());
+        } else {
+          // 默认全选新加载的文档
+          setSelectedIds((prev) => {
+            const next = new Set(prev);
+            for (const d of res.items) next.add(d.id);
+            return next;
+          });
+        }
       })
       .catch((err) => {
         console.error('加载文档列表失败:', err);
@@ -106,8 +128,26 @@ export default function ChatPage() {
     conversationApi
       .list()
       .then(async (list) => {
-        if (list.length === 0) {
+        if (focusedDocId !== null) {
+          // #51 路由聚焦：总是新建一个会话并激活，标题默认取小说名；
+          // 历史会话保留在列表中（新建的置顶）。
+          if (focusedConvCreatedRef.current) return;
+          focusedConvCreatedRef.current = true;
+          try {
+            const created = await createFocusedConversation(focusedDocId);
+            setConversations([created, ...list]);
+            setActiveConvId(created.id);
+            setMessages([]);
+          } catch (err) {
+            // 创建失败时重置守卫，允许 StrictMode 第二次执行重试
+            focusedConvCreatedRef.current = false;
+            setError('新建会话失败，请稍后重试');
+            console.error('聚焦新建会话失败:', err);
+          }
+        } else if (list.length === 0) {
           // 首次进入若无会话则自动建一个，激活到该 id 并空消息列表。
+          if (autoConvCreatedRef.current) return;
+          autoConvCreatedRef.current = true;
           const created = await conversationApi.create({});
           setConversations([created]);
           setActiveConvId(created.id);
@@ -121,6 +161,18 @@ export default function ChatPage() {
         console.error('加载会话列表失败:', err);
       });
   }, []);
+
+  /** #51：按小说 id 新建会话——标题默认取小说名；取不到时回退后端默认。 */
+  const createFocusedConversation = async (docId: number) => {
+    let title: string | undefined;
+    try {
+      const doc = await documentApi.get(docId);
+      title = getDisplayTitle(doc);
+    } catch (err) {
+      console.warn('获取小说信息失败，会话标题回退默认:', err);
+    }
+    return conversationApi.create(title ? { title } : {});
+  };
 
   // 激活会话变化时：拉取该会话的消息历史（#35）。
   useEffect(() => {
@@ -261,10 +313,13 @@ export default function ChatPage() {
     const convIdAtSend = activeConvId;
 
     // 首条用户消息发送成功后，把会话标题改成消息前 20 字摘要（#35）。
-    // 不在标题已是用户摘要形式时再次修改，避免重复触发。
+    // 仅在标题仍是默认「新对话」时改写；已命名的会话（#51 小说名）不覆盖，
+    // 且改成摘要后不再重复触发。
     const currentConv = conversations.find((c) => c.id === convIdAtSend);
     const isFirstMessage =
-      currentConv && (currentConv.message_count === 0 || currentConv.title === '新对话');
+      currentConv &&
+      currentConv.message_count === 0 &&
+      currentConv.title === '新对话';
     if (isFirstMessage) {
       const newTitle = summarizeTitle(sentText);
       // 乐观更新本地标题（失败不回滚，便于用户继续对话）
@@ -515,7 +570,16 @@ export default function ChatPage() {
       {/* 右侧对话主体 */}
       <div className="chat-area">
         <header>
-          <h1>DocQA - 小说问答助手</h1>
+          {/* #51 顶部左侧 DocQA Logo：点击返回首页书架（#50 删导航后的返回入口） */}
+          <Link
+            to="/"
+            className="chat-header-logo"
+            data-testid="chat-logo"
+            aria-label="DocQA 返回首页"
+          >
+            DocQA
+          </Link>
+          <h1>小说问答助手</h1>
         </header>
 
         <div className="messages">

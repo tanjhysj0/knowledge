@@ -34,8 +34,8 @@ test.describe('Chat Page - E2E', () => {
   });
 
   test('应展示页面标题与聊天区', async ({ page }) => {
-    // 验证页面标题
-    await expect(page.locator('h1')).toContainText('DocQA');
+    // 验证页面标题（#51 改为头部左侧 DocQA Logo 品牌展示）
+    await expect(page.locator('[data-testid="chat-logo"]')).toContainText('DocQA');
     await expect(page.locator('textarea')).toBeVisible();
     await expect(page.locator('button:has-text("发送")')).toBeVisible();
   });

@@ -31,15 +31,13 @@ test.describe('Layout + NovelListPage - E2E (#50)', () => {
     });
 
     test('首页渲染书架：卡片网格或空状态二选一', async ({ page }) => {
-      // #50：有小说时展示卡片网格，无小说时展示居中空状态
+      // #50：有小说时展示卡片网格，无小说时展示居中空状态。
+      // 组合选择器等待二者之一出现，避免数据加载与两次检查间的竞态。
       await page.goto('/');
 
-      const hasCards = (await page.locator('.novel-card').count()) > 0;
-      const hasEmpty = await page
-        .locator('[data-testid="shelf-empty"]')
-        .isVisible()
-        .catch(() => false);
-      expect(hasCards || hasEmpty).toBeTruthy();
+      await expect(
+        page.locator('.novel-card, [data-testid="shelf-empty"]').first()
+      ).toBeVisible({ timeout: 5_000 });
     });
   });
 });

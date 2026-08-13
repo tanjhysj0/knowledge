@@ -3,10 +3,11 @@
  * 只保留平铺卡片网格——每张卡片 = 封面大图（竖版 2:3，无封面显示
  * 默认封面图）+ 底部居中书名（超长省略）。hover 微放大 + 阴影。
  *
- * 整卡可点击（role=button + cursor），点击链路由 #51 实现（跳转
- * /chat?doc=<id> 并聚焦单小说）。
+ * 整卡可点击（role=button + cursor）：点击跳转 /chat?doc=<id>（#51），
+ * 聊天页聚焦该小说并新建会话。
  */
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { documentApi } from '../services/api';
 import type { Document } from '../types';
 import DefaultCover from '../components/DefaultCover';
@@ -15,8 +16,8 @@ import { getCoverFileName, getDisplayTitle } from '../utils/format';
 /** 书架一次拉取的小说数量（纯展示，无分页）。 */
 const SHELF_PAGE_SIZE = 1000;
 
-/** 单张小说卡片：封面大图（2:3）+ 底部居中书名。 */
-function NovelCard({ doc }: { doc: Document }) {
+/** 单张小说卡片：封面大图（2:3）+ 底部居中书名；点击开始讨论（#51）。 */
+function NovelCard({ doc, onOpen }: { doc: Document; onOpen: (id: number) => void }) {
   return (
     <div
       className="novel-card"
@@ -24,6 +25,14 @@ function NovelCard({ doc }: { doc: Document }) {
       role="button"
       tabIndex={0}
       title={getDisplayTitle(doc)}
+      onClick={() => onOpen(doc.id)}
+      onKeyDown={(e) => {
+        // role=button 语义：Enter / 空格键触发跳转
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen(doc.id);
+        }
+      }}
     >
       <div className="novel-card-cover">
         {doc.cover_image_path ? (
@@ -45,6 +54,13 @@ function NovelCard({ doc }: { doc: Document }) {
 export default function NovelListPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  /** #51：点击卡片跳转聊天页并携带小说标识（/chat?doc=<id>）。 */
+  const openNovelChat = useCallback(
+    (id: number) => navigate(`/chat?doc=${id}`),
+    [navigate]
+  );
 
   const fetchDocuments = useCallback(async () => {
     try {
@@ -67,7 +83,7 @@ export default function NovelListPage() {
       {documents.length > 0 ? (
         <div className="shelf-grid" data-testid="shelf-grid">
           {documents.map((doc) => (
-            <NovelCard key={doc.id} doc={doc} />
+            <NovelCard key={doc.id} doc={doc} onOpen={openNovelChat} />
           ))}
         </div>
       ) : (

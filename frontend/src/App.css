@@ -69,6 +69,21 @@
   font-size: 18px;
 }
 
+/* #51：聊天页头部左侧 DocQA Logo（点击返回首页书架） */
+.chat-header-logo {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-decoration: none;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.chat-header-logo:hover {
+  color: #e3f2fd;
+}
+
 .chat-area header button {
   background: rgba(255,255,255,0.2);
   border: none;
