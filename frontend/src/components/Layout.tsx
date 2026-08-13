@@ -9,7 +9,6 @@ export default function Layout({ children }: LayoutProps) {
 
   const navItems = [
     { path: '/', label: '首页' },
-    { path: '/documents', label: '文档管理' },
     { path: '/chat', label: '问答' },
     { path: '/settings', label: '设置' },
   ];

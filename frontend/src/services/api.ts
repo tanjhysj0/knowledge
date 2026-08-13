@@ -20,10 +20,15 @@ const api = axios.create({
 export const documentApi = {
   upload: async (
     file: File,
+    cover: File | null = null,
     onProgress?: (progress: UploadProgress) => void
   ): Promise<Document> => {
     const formData = new FormData();
     formData.append('file', file);
+    // #48：可选封面（封面字段与后端 multipart 字段名一致）
+    if (cover) {
+      formData.append('cover', cover);
+    }
     const response = await api.post<Document>('/documents/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress: (progressEvent) => {

@@ -70,10 +70,10 @@ cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
     '上传含关键词 .md 后 ChatPage 应显示 context-indicator 并默认选中',
     async ({ page, uploadedDocs }) => {
       const filename = `cross-page-rag-${Date.now()}.md`;
-      await page.goto('/documents');
+      await page.goto('/');
       await page.waitForSelector('.upload-zone');
 
-      const fileInput = page.locator('input[type="file"]');
+      const fileInput = page.locator('[data-testid="novel-file-input"]');
       await fileInput.setInputFiles({
         name: filename,
         mimeType: 'text/markdown',
@@ -126,9 +126,9 @@ cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
     '选中后提问 → 后端应收到包含文档 id 的请求并返回 mock 回复',
     async ({ page, uploadedDocs }) => {
       const filename = `cross-page-rag-qa-${Date.now()}.md`;
-      await page.goto('/documents');
+      await page.goto('/');
       await page.waitForSelector('.upload-zone');
-      await page.locator('input[type="file"]').setInputFiles({
+      await page.locator('[data-testid="novel-file-input"]').setInputFiles({
         name: filename,
         mimeType: 'text/markdown',
         buffer: Buffer.from(`# 公司财务报告\n\n本年度${KEYWORD}。`),
@@ -178,9 +178,9 @@ cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
     '取消选中后提问 → 请求体不应携带任何文档 id',
     async ({ page, uploadedDocs }) => {
       const filename = `cross-page-rag-empty-${Date.now()}.md`;
-      await page.goto('/documents');
+      await page.goto('/');
       await page.waitForSelector('.upload-zone');
-      await page.locator('input[type="file"]').setInputFiles({
+      await page.locator('[data-testid="novel-file-input"]').setInputFiles({
         name: filename,
         mimeType: 'text/markdown',
         buffer: Buffer.from(`# 报告\n\n本年度${KEYWORD}。`),
@@ -225,9 +225,9 @@ cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
     async ({ page, uploadedDocs }) => {
       const filenameA = `cross-page-rag-A-${Date.now()}.md`;
       const filenameB = `cross-page-rag-B-${Date.now()}.md`;
-      await page.goto('/documents');
+      await page.goto('/');
       await page.waitForSelector('.upload-zone');
-      const fileInput = page.locator('input[type="file"]');
+      const fileInput = page.locator('[data-testid="novel-file-input"]');
       await fileInput.setInputFiles({
         name: filenameA,
         mimeType: 'text/markdown',
@@ -324,9 +324,9 @@ cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
       // 额外上传一个"诱饵"文档，避免删除目标后 totalCount=0 导致
       // ChatPage 隐藏 context-toggle（页面只在有文档时才渲染选择入口）。
       const decoyFilename = `cross-page-rag-decoy-${Date.now()}.md`;
-      await page.goto('/documents');
+      await page.goto('/');
       await page.waitForSelector('.upload-zone');
-      const fileInput = page.locator('input[type="file"]');
+      const fileInput = page.locator('[data-testid="novel-file-input"]');
       await fileInput.setInputFiles({
         name: filename,
         mimeType: 'text/markdown',

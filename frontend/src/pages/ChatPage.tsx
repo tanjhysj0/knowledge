@@ -445,12 +445,12 @@ export default function ChatPage() {
 
   const selectedCount = selectedIds.size;
   const totalCount = documents.length;
-  // 三态文案：有文档未选 / 全选 / 部分选；无文档时不渲染
+  // 三态文案：有小说未选 / 全选 / 部分选；无小说时不渲染（#49 文案统一）
   const contextLabel = (() => {
     if (totalCount === 0) return null;
-    if (selectedCount === 0) return '未选择文档，将基于通用知识回答';
-    if (selectedCount === totalCount) return `基于全部 ${totalCount} 个文档回答`;
-    return `基于 ${selectedCount} / ${totalCount} 个文档回答`;
+    if (selectedCount === 0) return '未选择小说，将基于通用知识回答';
+    if (selectedCount === totalCount) return `基于全部 ${totalCount} 本小说回答`;
+    return `基于 ${selectedCount} / ${totalCount} 本小说回答`;
   })();
 
   return (
@@ -515,14 +515,14 @@ export default function ChatPage() {
       {/* 右侧对话主体 */}
       <div className="chat-area">
         <header>
-          <h1>DocQA - 文档问答助手</h1>
+          <h1>DocQA - 小说问答助手</h1>
         </header>
 
         <div className="messages">
           {messages.length === 0 && (
             <div className="empty-state">
               <p>开始对话吧！</p>
-              <small>上传文档后可基于文档内容回答问题</small>
+              <small>上传小说后可基于小说内容回答问题</small>
             </div>
           )}
 
@@ -639,7 +639,7 @@ export default function ChatPage() {
                   onClick={() => setSelectorOpen((v) => !v)}
                   aria-expanded={selectorOpen}
                 >
-                  {selectorOpen ? '收起' : '选择文档'}
+                  {selectorOpen ? '收起' : '选择小说'}
                 </button>
               )}
             </div>
@@ -648,7 +648,7 @@ export default function ChatPage() {
           {selectorOpen && totalCount > 0 && (
             <div className="document-selector" data-testid="document-selector">
               <div className="document-selector-header">
-                <span>文档选择</span>
+                <span>小说选择</span>
                 <button
                   type="button"
                   className="document-selector-all"

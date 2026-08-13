@@ -3,6 +3,7 @@ import { documentApi } from '../services/api';
 import type { Document, UploadProgress } from '../types';
 
 const ALLOWED_TYPES = ['txt', 'md', 'pdf', 'docx'];
+const ALLOWED_COVER_TYPES = ['jpg', 'jpeg', 'png', 'webp'];
 const PAGE_SIZE = 10;
 
 function formatFileSize(bytes: number): string {
@@ -28,17 +29,46 @@ function getFileExtension(filename: string): string {
   return filename.split('.').pop()?.toLowerCase() || '';
 }
 
-export default function DocumentsPage() {
+/** 封面缩略图：有封面显示 img，无封面显示占位 SVG（#49）。 */
+function CoverThumb({ doc }: { doc: Document }) {
+  if (!doc.cover_image_path) {
+    return (
+      <div className="doc-item-cover doc-item-cover-placeholder">
+        <svg viewBox="0 0 24 32" width="24" height="32" aria-hidden="true">
+          <rect width="24" height="32" rx="2" fill="#e3e8ef" />
+          <text x="12" y="20" textAnchor="middle" fontSize="10" fill="#9aa4b2">
+            封
+          </text>
+        </svg>
+      </div>
+    );
+  }
+  const coverFile = doc.cover_image_path.split('/').pop() ?? doc.cover_image_path;
+  return (
+    <img
+      className="doc-item-cover"
+      src={`/api/covers/${coverFile}`}
+      alt={`${doc.filename} 封面`}
+      loading="lazy"
+    />
+  );
+}
+
+export default function NovelListPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [isDragging, setIsDragging] = useState(false);
+  const [isCoverDragging, setIsCoverDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [uploadFileName, setUploadFileName] = useState('');
+  const [pendingCover, setPendingCover] = useState<File | null>(null);
+  const [pendingCoverName, setPendingCoverName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
 
   const fetchDocuments = useCallback(async (page: number) => {
     try {
@@ -49,7 +79,7 @@ export default function DocumentsPage() {
       setTotalPages(response.total_pages);
       setCurrentPage(response.page);
     } catch (err) {
-      setError('加载文档列表失败');
+      setError('加载小说列表失败');
       console.error('Failed to load documents:', err);
     }
   }, []);
@@ -79,7 +109,7 @@ export default function DocumentsPage() {
     setUploadProgress(null);
 
     try {
-      const doc = await documentApi.upload(file, (progress) => {
+      const doc = await documentApi.upload(file, pendingCover, (progress) => {
         setUploadProgress(progress);
       });
       setDocuments((prev) => [doc, ...prev]);
@@ -90,6 +120,9 @@ export default function DocumentsPage() {
       if (currentPage > newTotalPages) {
         setCurrentPage(newTotalPages);
       }
+      // 封面已随正文一起上传（#49）
+      setPendingCover(null);
+      setPendingCoverName('');
     } catch (err: any) {
       setError(err.response?.data?.detail || '上传失败');
       console.error('Upload failed:', err);
@@ -99,11 +132,40 @@ export default function DocumentsPage() {
     }
   };
 
+  const handleCoverSelect = (file: File) => {
+    const ext = getFileExtension(file.name);
+    if (!ALLOWED_COVER_TYPES.includes(ext)) {
+      setError(`不支持的封面格式: .${ext}，仅支持 ${ALLOWED_COVER_TYPES.join(', ')}`);
+      return;
+    }
+    setError(null);
+    setPendingCover(file);
+    setPendingCoverName(file.name);
+  };
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
     const file = e.dataTransfer.files[0];
     if (file) handleFileUpload(file);
+  };
+
+  const handleCoverDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsCoverDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleCoverSelect(file);
+  };
+
+  const handleCoverZoneClick = () => {
+    if (isUploading) return;
+    if (pendingCover) {
+      // 已就绪封面：点击移除
+      setPendingCover(null);
+      setPendingCoverName('');
+      return;
+    }
+    coverInputRef.current?.click();
   };
 
   const handleDelete = async (id: number) => {
@@ -131,7 +193,7 @@ export default function DocumentsPage() {
 
   return (
     <div className="p-6">
-      <h2 className="text-2xl font-bold mb-4">文档管理</h2>
+      <h1 className="text-2xl font-bold mb-4">我的小说库</h1>
 
       {error && (
         <div className="error-message" onClick={() => setError(null)}>
@@ -139,27 +201,68 @@ export default function DocumentsPage() {
         </div>
       )}
 
-      <div
-        className={`upload-zone ${isDragging ? 'dragging' : ''}`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setIsDragging(true);
-        }}
-        onDragLeave={() => setIsDragging(false)}
-        onDrop={handleDrop}
-        onClick={() => !isUploading && fileInputRef.current?.click()}
-      >
-        <p>{isUploading ? '上传中...' : '拖拽或点击上传文件'}</p>
-        <small>支持 {ALLOWED_TYPES.join(', ').toUpperCase()} 格式</small>
+      <div className="upload-grid">
+        <div
+          className={`upload-zone ${isDragging ? 'dragging' : ''}`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
+          onClick={() => !isUploading && fileInputRef.current?.click()}
+        >
+          <p>{isUploading ? '上传中...' : '拖拽或点击上传小说正文'}</p>
+          <small>支持 {ALLOWED_TYPES.join(', ').toUpperCase()} 格式</small>
+        </div>
+
+        <div
+          className={`upload-zone cover-upload-zone ${isCoverDragging ? 'dragging' : ''}`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsCoverDragging(true);
+          }}
+          onDragLeave={() => setIsCoverDragging(false)}
+          onDrop={handleCoverDrop}
+          onClick={handleCoverZoneClick}
+        >
+          {pendingCover ? (
+            <>
+              <p className="cover-ready">封面已就绪：{pendingCoverName}</p>
+              <small>点击移除，选择正文后将一起上传</small>
+            </>
+          ) : (
+            <>
+              <p>拖拽或点击上传封面（可选）</p>
+              <small>支持 {ALLOWED_COVER_TYPES.join(', ').toUpperCase()} 格式</small>
+            </>
+          )}
+        </div>
       </div>
 
       <input
         ref={fileInputRef}
         type="file"
+        data-testid="novel-file-input"
+        className="novel-file-input"
         accept=".txt,.md,.pdf,.docx"
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) handleFileUpload(file);
+          e.target.value = '';
+        }}
+        hidden
+      />
+
+      <input
+        ref={coverInputRef}
+        type="file"
+        data-testid="cover-file-input"
+        className="cover-file-input"
+        accept=".jpg,.jpeg,.png,.webp"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) handleCoverSelect(file);
           e.target.value = '';
         }}
         hidden
@@ -185,6 +288,7 @@ export default function DocumentsPage() {
           <>
             {documents.map((doc) => (
               <div key={doc.id} className="doc-item">
+                <CoverThumb doc={doc} />
                 <div className="doc-item-info">
                   <div className="doc-item-name">{doc.filename}</div>
                   <div className="doc-item-meta">
@@ -214,7 +318,7 @@ export default function DocumentsPage() {
                   上一页
                 </button>
                 <span className="pagination-info">
-                  第 {currentPage} / {totalPages} 页，共 {total} 个文档
+                  第 {currentPage} / {totalPages} 页，共 {total} 本小说
                 </span>
                 <button
                   className="pagination-btn"
@@ -227,7 +331,7 @@ export default function DocumentsPage() {
             )}
           </>
         ) : (
-          <div className="empty-state">暂无文档，请上传文件</div>
+          <div className="empty-state">暂无小说，请上传文件</div>
         )}
       </div>
     </div>

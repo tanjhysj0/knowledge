@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Layout + HomePage - E2E', () => {
+test.describe('Layout + NovelListPage - E2E', () => {
   test.describe('Layout navigation', () => {
-    test('应在所有页面展示 DocQA Logo 与 4 个导航链接', async ({ page }) => {
+    test('应在所有页面展示 DocQA Logo 与 3 个导航链接', async ({ page }) => {
       await page.goto('/');
 
       // DocQA logo 指向首页
@@ -10,32 +10,28 @@ test.describe('Layout + HomePage - E2E', () => {
       await expect(logo).toBeVisible();
       await expect(logo).toHaveAttribute('href', '/');
 
-      // 4 个导航链接均可见
+      // #49：导航精简为 3 个链接（文档管理已并入首页小说库）
       await expect(page.locator('nav a:has-text("首页")')).toBeVisible();
-      await expect(page.locator('nav a:has-text("文档管理")')).toBeVisible();
       await expect(page.locator('nav a:has-text("问答")')).toBeVisible();
       await expect(page.locator('nav a:has-text("设置")')).toBeVisible();
 
-      // 验证 /documents /chat /settings 页面也都渲染顶部导航
-      await page.goto('/documents');
-      await expect(page.locator('nav a:has-text("DocQA")')).toBeVisible();
-      await expect(page.locator('nav a:has-text("首页")')).toBeVisible();
-
+      // 验证 /chat /settings 页面也都渲染顶部导航
       await page.goto('/chat');
       await expect(page.locator('nav a:has-text("DocQA")')).toBeVisible();
+      await expect(page.locator('nav a:has-text("首页")')).toBeVisible();
 
       await page.goto('/settings');
       await expect(page.locator('nav a:has-text("DocQA")')).toBeVisible();
     });
 
-    test('点击“文档管理”应跳转并高亮', async ({ page }) => {
-      // 点击"文档管理"应跳转且当前链接高亮
-      await page.goto('/');
-      const docsLink = page.locator('nav a:has-text("文档管理")');
-      await docsLink.click();
+    test('点击“首页”应跳转并高亮', async ({ page }) => {
+      // 点击"首页"应跳转且当前链接高亮
+      await page.goto('/chat');
+      const homeLink = page.locator('nav a:has-text("首页")');
+      await homeLink.click();
 
-      await expect(page).toHaveURL(/\/documents$/);
-      await expect(docsLink).toHaveClass(/bg-blue-50/);
+      await expect(page).toHaveURL(/\/$/);
+      await expect(homeLink).toHaveClass(/bg-blue-50/);
     });
 
     test('点击“问答”应跳转并高亮', async ({ page }) => {
@@ -70,12 +66,11 @@ test.describe('Layout + HomePage - E2E', () => {
 
     test('只有匹配当前路径的链接高亮', async ({ page }) => {
       // 当前路径下的链接高亮，其它链接不高亮
-      await page.goto('/documents');
+      await page.goto('/chat');
 
-      await expect(page.locator('nav a:has-text("文档管理")')).toHaveClass(/bg-blue-50/);
+      await expect(page.locator('nav a:has-text("问答")')).toHaveClass(/bg-blue-50/);
 
       await expect(page.locator('nav a:has-text("首页")')).not.toHaveClass(/bg-blue-50/);
-      await expect(page.locator('nav a:has-text("问答")')).not.toHaveClass(/bg-blue-50/);
       await expect(page.locator('nav a:has-text("设置")')).not.toHaveClass(/bg-blue-50/);
     });
 
@@ -91,16 +86,16 @@ test.describe('Layout + HomePage - E2E', () => {
     });
   });
 
-  test.describe('HomePage', () => {
-    test('首页应展示 h1 标题与副标题', async ({ page }) => {
-      // 首页应展示标题与副标题
+  test.describe('NovelListPage（首页）', () => {
+    test('首页应展示 h1 标题与双上传区', async ({ page }) => {
+      // #49：首页即小说库，h1 为"我的小说库"，正文 + 封面两个拖拽区并排
       await page.goto('/');
 
       const h1 = page.locator('h1');
-      await expect(h1).toContainText('DocQA');
-      await expect(h1).toContainText('文档问答助手');
+      await expect(h1).toContainText('我的小说库');
 
-      await expect(page.locator('text=上传文档，开始智能问答')).toBeVisible();
+      await expect(page.locator('.upload-zone').first()).toBeVisible();
+      await expect(page.locator('.upload-zone').nth(1)).toBeVisible();
     });
   });
 });

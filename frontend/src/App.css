@@ -28,6 +28,29 @@
   transition: border-color 0.2s;
 }
 
+/* #49：小说正文 + 封面两个独立拖拽区并排 */
+.upload-grid {
+  display: flex;
+  gap: 16px;
+}
+
+.upload-grid .upload-zone {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.cover-upload-zone {
+  background: #fafafa;
+}
+
+.cover-upload-zone .cover-ready {
+  color: #1976d2;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .upload-zone:hover,
 .upload-zone.dragging {
   border-color: #1976d2;
@@ -395,6 +418,23 @@
   align-items: center;
   padding: 12px 16px;
   border-bottom: 1px solid #f0f0f0;
+}
+
+/* #49：列表项左侧封面缩略图（img 或占位 SVG） */
+.doc-item-cover {
+  width: 48px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 4px;
+  margin-right: 12px;
+  flex-shrink: 0;
+}
+
+.doc-item-cover-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f3f5f9;
 }
 
 .doc-item:last-child {

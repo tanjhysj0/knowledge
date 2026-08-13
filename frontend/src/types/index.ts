@@ -6,6 +6,8 @@ export interface Document {
   size: number;
   chunk_count: number;
   created_at: string;
+  // #47：封面图片相对路径（如 ``covers/123.png``）；存量/无封面记录为 null。
+  cover_image_path?: string | null;
 }
 
 export interface ChatMessage {
