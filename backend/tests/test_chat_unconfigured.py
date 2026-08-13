@@ -44,6 +44,22 @@ class TestChatEndpointLLMUnconfigured:
         body = response.json()
         assert body["reason"] == "OpenAI API Key 未配置"
 
+    def test_e2e_mock_request_skips_preflight(self, monkeypatch):
+        """E2E mock 请求（X-E2E-Test）即使 LLM 未配置也不应被 503 拦截。"""
+        _patch_llm_unconfigured(monkeypatch)
+
+        with patch.object(chat_module.chat_service, "ask", new=AsyncMock(
+            return_value={"answer": "mock answer", "sources": []}
+        )) as mock_ask:
+            response = client.post(
+                "/api/chat",
+                headers={"X-E2E-Test": "true"},
+                json={"message": "hi", "conversation_id": 1, "document_ids": []},
+            )
+            assert response.status_code == 200
+            assert response.json()["message"] == "mock answer"
+            mock_ask.assert_called_once()
+
     def test_does_not_call_llm_or_persist_messages(self, monkeypatch):
         _patch_llm_unconfigured(monkeypatch)
 
@@ -59,6 +75,25 @@ class TestChatEndpointLLMUnconfigured:
 
 class TestChatStreamEndpointLLMUnconfigured:
     """``POST /api/chat/stream`` 在 LLM 未配置时立即产 error + done SSE。"""
+
+    @pytest.mark.asyncio
+    async def test_e2e_mock_request_skips_preflight(self, monkeypatch):
+        """E2E mock 请求即使 LLM 未配置也应跳过 preflight 直接走 mock 流。"""
+        _patch_llm_unconfigured(monkeypatch)
+
+        payload = ChatRequest(message="hi", document_ids=[], conversation_id=1)
+        request = SimpleNamespace(headers={"x-e2e-test": "true"})
+
+        with patch.object(chat_module.chat_service, "stream_answer") as mock_stream:
+            async def _fake_stream():
+                yield {"event": "message", "data": json.dumps({"content": "hi"})}
+                yield {"event": "done", "data": json.dumps({"sources": []})}
+
+            mock_stream.return_value = _fake_stream()
+            response = await chat_module.chat_stream(request=request, payload=payload, db=object())
+            events = [ev["event"] async for ev in response.body_iterator]
+            assert events == ["message", "done"]
+            mock_stream.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_stream_yields_error_then_done(self, monkeypatch):

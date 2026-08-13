@@ -159,6 +159,18 @@ class AnthropicProvider:
                 yield text_event
 
 
+def is_e2e_mock_request(request: Optional[Request]) -> bool:
+    """请求是否携带 ``X-E2E-Test: true``（E2E mock 模式）。
+
+    mock 模式下 LLM 响应由 :class:`MockLLMProvider` 提供，不依赖真实
+    配置，因此 ``#45`` preflight（:func:`is_llm_configured`）应跳过。
+    """
+    return (
+        request is not None
+        and request.headers.get(mock_llm.E2E_TEST_HEADER, "").lower() == "true"
+    )
+
+
 def get_llm_provider(request: Optional[Request] = None) -> LLMProvider:
     """Factory function to get the configured LLM provider.
 
@@ -172,10 +184,7 @@ def get_llm_provider(request: Optional[Request] = None) -> LLMProvider:
     ``chat`` / ``stream_chat`` 抛 ``RuntimeError``，用于稳定测试运行时
     LLM 不可用路径。
     """
-    if (
-        request is not None
-        and request.headers.get(mock_llm.E2E_TEST_HEADER, "").lower() == "true"
-    ):
+    if is_e2e_mock_request(request):
         include_thinking = (
             request.headers.get(mock_llm.E2E_MOCK_THINKING_HEADER, "").lower()
             == "true"

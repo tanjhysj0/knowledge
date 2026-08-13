@@ -109,8 +109,8 @@ test.describe('Backend API 契约 - E2E', () => {
   });
 
   test('POST /api/chat/stream 错误路径应返回 event: error 且 data 含 error 字符串', async ({ page }) => {
-    // 删除 X-E2E-Test header，强制后端走真实 LLM provider（无 key 会连接失败 →
-    // stream_answer 异常路径 → yield event: error）。这是 SSE 错误路径的契约测试。
+    // 删除 X-E2E-Test header，强制后端走真实 LLM preflight（真实环境无 key →
+    // #45 preflight 拒绝 → error + done SSE）。这是 SSE 错误路径的契约测试。
     await page.route('**/api/chat/stream', async (route) => {
       const headers = { ...route.request().headers() };
       delete headers['x-e2e-test'];
@@ -127,8 +127,7 @@ test.describe('Backend API 契约 - E2E', () => {
     const errorData = errorEvents[0].data as { error: string };
     expect(typeof errorData.error).toBe('string');
     expect(errorData.error.length).toBeGreaterThan(0);
-    // 错误路径不应该有 done / message 事件
-    expect(events.filter((item) => item.event === 'done').length).toBe(0);
+    // 错误路径不应该有 message 事件（#45 preflight 会以 done 收尾）
     expect(events.filter((item) => item.event === 'message').length).toBe(0);
   });
 

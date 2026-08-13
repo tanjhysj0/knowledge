@@ -20,7 +20,7 @@ from app.core.database import get_db
 from app.models.schemas import ChatRequest, ChatResponse
 from app.services import chat as chat_service
 from app.services.conversations import ConversationNotFoundError
-from app.services.llm import is_llm_configured
+from app.services.llm import is_e2e_mock_request, is_llm_configured
 
 router = APIRouter()
 
@@ -61,9 +61,10 @@ async def chat(
     """Non-streaming RAG-based chat endpoint.
 
     #45：preflight 不通过时直接返回 503，不调 LLM / 不写库。
+    E2E mock 请求（X-E2E-Test）由 MockLLMProvider 应答，无需真实配置，跳过 preflight。
     """
     configured, reason = is_llm_configured()
-    if not configured:
+    if not configured and not is_e2e_mock_request(request):
         return _llm_unavailable_json(reason)
 
     try:
@@ -95,9 +96,10 @@ async def chat_stream(
     据此提示用户刷新页面。
 
     #45：preflight 不通过时立即产 ``error`` + ``done`` SSE，不调 LLM / 不写库。
+    # E2E mock 请求（X-E2E-Test）由 MockLLMProvider 应答，无需真实配置，跳过 preflight。
     """
     configured, reason = is_llm_configured()
-    if not configured:
+    if not configured and not is_e2e_mock_request(request):
         return EventSourceResponse(_llm_unavailable_events(reason))
 
     return EventSourceResponse(
