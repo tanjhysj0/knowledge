@@ -8,22 +8,19 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { documentApi } from '../services/api';
 import type { Document } from '../types';
-import DefaultCover from '../components/DefaultCover';
-import { formatDate, formatFileSize, getCoverFileName, getDisplayTitle } from '../utils/format';
+import CoverImage from '../components/CoverImage';
+import { formatDate, formatFileSize, getDisplayTitle } from '../utils/format';
 
 const PAGE_SIZE = 10;
 
 /** 列表行封面缩略图：有封面显示 img，无封面显示默认封面图（#53）。 */
 function CoverThumb({ doc }: { doc: Document }) {
-  if (!doc.cover_image_path) {
-    return <DefaultCover className="doc-item-cover" />;
-  }
   return (
-    <img
-      className="doc-item-cover"
-      src={`/api/covers/${getCoverFileName(doc.cover_image_path)}`}
+    <CoverImage
+      path={doc.cover_image_path}
+      imgClassName="doc-item-cover"
+      defaultClassName="doc-item-cover"
       alt={`${getDisplayTitle(doc)} 封面`}
-      loading="lazy"
     />
   );
 }

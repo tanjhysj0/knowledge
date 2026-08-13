@@ -31,7 +31,12 @@ export function getDisplayTitle(doc: Document): string {
   return doc.title || doc.filename.replace(/\.[^.]+$/, '');
 }
 
+/** 封面存储路径 → 静态资源 URL（#56：路径拼接收敛到单一函数）。 */
+export function getCoverUrl(path: string): string {
+  return `/api/covers/${getCoverFileName(path)}`;
+}
+
 /** 封面存储路径 → 文件名（用于拼静态资源 URL）。 */
-export function getCoverFileName(path: string): string {
+function getCoverFileName(path: string): string {
   return path.split('/').pop() ?? path;
 }

@@ -4,6 +4,7 @@ import { conversationApi, documentApi, llmStatusApi } from '../services/api';
 import type { ChatMessage as ApiChatMessage, Conversation, Document } from '../types';
 import { SSEParser } from '../utils/sseParser';
 import { getDisplayTitle } from '../utils/format';
+import { parseDocId, parseSources } from '../utils/chat';
 import '../App.css';
 
 /** #45 聊天页输入区上方的 LLM 异常 banner。 */
@@ -33,14 +34,7 @@ interface ChatMessage {
   documentIds?: string | null;
 }
 
-/** 把 ``doc_<id>`` 解析为 ``<id>`` 整数（无效 token 返回 null）。 */
-function parseDocId(token: string): number | null {
-  if (!token.startsWith('doc_')) return null;
-  const id = Number(token.slice(4));
-  return Number.isInteger(id) && id > 0 ? id : null;
-}
-
-/** #51：把 ``doc`` 路由参数解析为合法小说 id（无参 / 非法返回 null）。 */
+/** 把 ``doc`` 路由参数解析为合法小说 id（无参 / 非法返回 null）。 */
 function parseFocusedDocId(param: string | null): number | null {
   if (param === null) return null;
   const id = Number(param);
@@ -341,16 +335,8 @@ export default function ChatPage() {
                     content += piece;
                   }
                 } else if (ev.event === 'done') {
-                  // done 事件携带 sources（#33）；保留后端顺序
-                  const incoming = Array.isArray(payload?.sources)
-                    ? Array.from(
-                        new Set(
-                          (payload!.sources as unknown[]).filter(
-                            (s): s is string => typeof s === 'string'
-                          )
-                        )
-                      )
-                    : [];
+                  // done 事件携带 sources（#33）；保留后端顺序（#56 收敛到 parseSources）
+                  const incoming = parseSources(payload);
                   if (incoming.length > 0) {
                     sourcesRef.current = incoming;
                   }
@@ -379,15 +365,7 @@ export default function ChatPage() {
             })
           );
         } else if (ev.event === 'done') {
-          const incoming = Array.isArray(payload?.sources)
-            ? Array.from(
-                new Set(
-                  (payload!.sources as unknown[]).filter(
-                    (s): s is string => typeof s === 'string'
-                  )
-                )
-              )
-            : [];
+          const incoming = parseSources(payload);
           if (incoming.length > 0) {
             sourcesRef.current = incoming;
             setMessages((prev) =>

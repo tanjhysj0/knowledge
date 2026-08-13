@@ -9,8 +9,8 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { documentApi } from '../services/api';
 import type { Document, UploadProgress } from '../types';
-import DefaultCover from '../components/DefaultCover';
-import { getCoverFileName, getDisplayTitle, getFileExtension } from '../utils/format';
+import CoverImage from '../components/CoverImage';
+import { getDisplayTitle, getFileExtension } from '../utils/format';
 
 const ALLOWED_TYPES = ['txt', 'md', 'pdf', 'docx'];
 const ALLOWED_COVER_TYPES = ['jpg', 'jpeg', 'png', 'webp'];
@@ -26,16 +26,14 @@ function FormCoverPreview({
   if (previewUrl) {
     return <img className="novel-form-cover-img" src={previewUrl} alt="封面预览" />;
   }
-  if (currentPath) {
-    return (
-      <img
-        className="novel-form-cover-img"
-        src={`/api/covers/${getCoverFileName(currentPath)}`}
-        alt="当前封面"
-      />
-    );
-  }
-  return <DefaultCover className="novel-form-cover-img" />;
+  return (
+    <CoverImage
+      path={currentPath}
+      imgClassName="novel-form-cover-img"
+      defaultClassName="novel-form-cover-img"
+      alt="当前封面"
+    />
+  );
 }
 
 export default function NovelEditorPage() {

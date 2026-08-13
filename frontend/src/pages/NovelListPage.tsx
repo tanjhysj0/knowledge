@@ -10,8 +10,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { documentApi } from '../services/api';
 import type { Document } from '../types';
-import DefaultCover from '../components/DefaultCover';
-import { getCoverFileName, getDisplayTitle } from '../utils/format';
+import CoverImage from '../components/CoverImage';
+import { getDisplayTitle } from '../utils/format';
 
 /** 书架一次拉取的小说数量（纯展示，无分页）。 */
 const SHELF_PAGE_SIZE = 1000;
@@ -35,16 +35,12 @@ function NovelCard({ doc, onOpen }: { doc: Document; onOpen: (id: number) => voi
       }}
     >
       <div className="novel-card-cover">
-        {doc.cover_image_path ? (
-          <img
-            className="novel-card-cover-img"
-            src={`/api/covers/${getCoverFileName(doc.cover_image_path)}`}
-            alt={`${getDisplayTitle(doc)} 封面`}
-            loading="lazy"
-          />
-        ) : (
-          <DefaultCover className="novel-card-cover-default" />
-        )}
+        <CoverImage
+          path={doc.cover_image_path}
+          imgClassName="novel-card-cover-img"
+          defaultClassName="novel-card-cover-default"
+          alt={`${getDisplayTitle(doc)} 封面`}
+        />
       </div>
       <div className="novel-card-title">{getDisplayTitle(doc)}</div>
     </div>
