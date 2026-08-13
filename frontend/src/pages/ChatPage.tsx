@@ -1,6 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { conversationApi, documentApi, llmStatusApi } from '../services/api';
+import {
+  chatApi,
+  conversationApi,
+  documentApi,
+  llmStatusApi,
+  LLMUnavailableError,
+} from '../services/api';
 import type { ChatMessage as ApiChatMessage, Conversation, Document } from '../types';
 import { SSEParser } from '../utils/sseParser';
 import { getDisplayTitle } from '../utils/format';
@@ -11,16 +17,6 @@ import '../App.css';
 interface LLMBannerState {
   message: string;
   showSettingsLink: boolean;
-}
-
-/** #45 LLM 不可用时由 handleSend 抛出，catch 块据此改走 banner 显示而非通用错误。 */
-class LLMUnavailableError extends Error {
-  readonly showSettingsLink: boolean;
-  constructor(message: string, showSettingsLink: boolean) {
-    super(message);
-    this.name = 'LLMUnavailableError';
-    this.showSettingsLink = showSettingsLink;
-  }
 }
 
 interface ChatMessage {
@@ -259,31 +255,17 @@ export default function ChatPage() {
     let assistantId: number | null = null;
 
     try {
-      const response = await fetch('/api/chat/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      // #58：流式请求统一走服务层；503 在服务层解析为 LLMUnavailableError。
+      const response = await chatApi.stream(
+        {
           message: sentText,
           document_ids: documentIds,
           conversation_id: convIdAtSend,
-        }),
-        signal: controller.signal,
-      });
+        },
+        controller.signal
+      );
 
       if (!response.ok) {
-        if (response.status === 503) {
-          // #45 后端 preflight 拒绝：LLM 未配置，提取 reason 后改走 banner。
-          let body: { reason?: string; error?: string } = {};
-          try {
-            body = (await response.json()) as { reason?: string; error?: string };
-          } catch {
-            // 后端未返回合法 JSON 时使用兜底文案。
-          }
-          throw new LLMUnavailableError(
-            body.reason || body.error || 'LLM 不可用',
-            true
-          );
-        }
         throw new Error('请求失败');
       }
 

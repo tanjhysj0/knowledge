@@ -25,6 +25,17 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+/** #45/#58：LLM 不可用时由服务层抛出（503 preflight 拒绝 / 运行时失败），
+ * 调用方据此改走 banner 显示而非通用错误。 */
+export class LLMUnavailableError extends Error {
+  readonly showSettingsLink: boolean;
+  constructor(message: string, showSettingsLink: boolean) {
+    super(message);
+    this.name = 'LLMUnavailableError';
+    this.showSettingsLink = showSettingsLink;
+  }
+}
+
 export const documentApi = {
   upload: async (
     file: File,
@@ -94,11 +105,40 @@ export const documentApi = {
 };
 
 export const chatApi = {
-  stream: async (request: ChatRequest): Promise<ReadableStream> => {
-    const response = await api.post('/chat/stream', request, {
-      responseType: 'stream',
+  /**
+   * #58：聊天流式请求统一走服务层。浏览器端 axios（XHR adapter）不支持
+   * ``responseType: 'stream'``（会静默退化为整段文本），故服务层内部用
+   * fetch 发出请求、把响应流透传给调用方；X-Client-Id 与 axios 拦截器
+   * 保持一致。503（LLM 未配置 preflight 拒绝）在此解析 reason 并抛
+   * LLMUnavailableError，其余非 2xx 由调用方走通用错误。
+   */
+  stream: async (
+    request: ChatRequest,
+    signal?: AbortSignal
+  ): Promise<Response> => {
+    const response = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Client-Id': getClientId(),
+      },
+      body: JSON.stringify(request),
+      signal,
     });
-    return response.data;
+    if (response.status === 503) {
+      // #45 后端 preflight 拒绝：提取 reason 后改走 banner。
+      let body: { reason?: string; error?: string } = {};
+      try {
+        body = (await response.json()) as { reason?: string; error?: string };
+      } catch {
+        // 后端未返回合法 JSON 时使用兜底文案。
+      }
+      throw new LLMUnavailableError(
+        body.reason || body.error || 'LLM 不可用',
+        true
+      );
+    }
+    return response;
   },
 };
 

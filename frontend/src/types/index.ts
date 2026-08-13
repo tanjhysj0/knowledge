@@ -23,6 +23,9 @@ export interface ChatMessage {
 export interface ChatRequest {
   message: string;
   document_ids: number[];
+  // #36/#58：目标会话 id。后端 Pydantic 强制必填（缺省 422），
+  // 前端发送时始终携带；类型上允许缺省以兼容早期调用点。
+  conversation_id?: number;
 }
 
 export interface ChatResponse {
