@@ -10,6 +10,8 @@ import pytest
 
 from app.services import documents as document_service
 from app.services.documents import (
+    CoverTooLargeError,
+    CoverTypeError,
     DocumentChunkError,
     DocumentEmbeddingError,
     DocumentEmptyError,
@@ -79,6 +81,9 @@ class _FakeAsyncSession:
         self._next_id += 1
         self.added.append(obj)
 
+    async def flush(self):
+        self.flushes = getattr(self, "flushes", 0) + 1
+
     async def commit(self):
         self.commits += 1
 
@@ -113,6 +118,15 @@ def upload_dir(tmp_path, monkeypatch):
     upload_path.mkdir()
     monkeypatch.setattr(document_service.settings, "upload_dir", str(upload_path))
     return upload_path
+
+
+@pytest.fixture
+def cover_dir(tmp_path, monkeypatch):
+    """使用临时目录替换 settings.cover_dir（#48）。"""
+    cover_path = tmp_path / "covers"
+    cover_path.mkdir()
+    monkeypatch.setattr(document_service.settings, "cover_dir", str(cover_path))
+    return cover_path
 
 
 class TestUploadDocument:
@@ -296,6 +310,92 @@ class TestUploadDocument:
         assert "milvus down" in str(exc.value)
 
 
+class TestUploadDocumentCover:
+    """#48：双文件上传（正文 + 可选封面）。"""
+
+    async def _upload(
+        self,
+        db,
+        *,
+        cover_content=None,
+        cover_ext=None,
+    ):
+        chunks = ["chunk one"]
+        fake_embeddings = [[0.1, 0.2]]
+
+        with patch.object(
+            document_service.DocumentParser, "parse", return_value="text body"
+        ), patch.object(
+            document_service.TextChunker, "chunk", return_value=chunks
+        ), patch.object(
+            document_service, "get_embedding_provider"
+        ) as mock_get_provider, patch.object(
+            document_service.VectorStoreService, "insert"
+        ), patch.object(
+            document_service.VectorStoreService, "__init__", return_value=None
+        ):
+            mock_provider = MagicMock()
+            mock_provider.embed_texts = MagicMock(return_value=fake_embeddings)
+            mock_get_provider.return_value = mock_provider
+
+            return await upload_document(
+                filename="novel.txt",
+                file_ext="txt",
+                content=b"novel bytes",
+                db=db,
+                cover_content=cover_content,
+                cover_ext=cover_ext,
+            )
+
+    @pytest.mark.asyncio
+    async def test_upload_with_cover_sets_cover_image_path(self, upload_dir, cover_dir):
+        db = _FakeAsyncSession(scalar_value=0)
+
+        document = await self._upload(
+            db, cover_content=b"\x89PNG fake", cover_ext="png"
+        )
+
+        assert document.cover_image_path == f"covers/{document.id}.png"
+        assert (cover_dir / f"{document.id}.png").read_bytes() == b"\x89PNG fake"
+        assert db.commits == 1
+
+    @pytest.mark.asyncio
+    async def test_upload_without_cover_keeps_cover_image_path_none(self, upload_dir, cover_dir):
+        db = _FakeAsyncSession(scalar_value=0)
+
+        document = await self._upload(db)
+
+        assert document.cover_image_path is None
+        assert list(cover_dir.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_invalid_cover_ext_raises_and_does_not_pollute(
+        self, upload_dir, cover_dir
+    ):
+        db = _FakeAsyncSession(scalar_value=0)
+
+        with pytest.raises(CoverTypeError):
+            await self._upload(db, cover_content=b"gif", cover_ext="gif")
+
+        # 前置校验失败：不写主文件、不落库（#48）
+        assert db.added == []
+        assert db.commits == 0
+        assert list(upload_dir.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_oversized_cover_raises(
+        self, upload_dir, cover_dir, monkeypatch
+    ):
+        monkeypatch.setattr(document_service.settings, "cover_max_size", 10)
+        db = _FakeAsyncSession(scalar_value=0)
+
+        with pytest.raises(CoverTooLargeError):
+            await self._upload(db, cover_content=b"x" * 11, cover_ext="png")
+
+        assert db.added == []
+        assert list(upload_dir.iterdir()) == []
+
+
 class TestListDocuments:
     """列表流程：分页归一化、总数查询、结果集组装。"""
 
@@ -367,7 +467,7 @@ class TestDeleteDocument:
     async def test_success_removes_vector_disk_and_db(self, upload_dir):
         file_path = upload_dir / "to-delete.txt"
         file_path.write_text("content")
-        document = SimpleNamespace(id=7, file_path=str(file_path))
+        document = SimpleNamespace(id=7, file_path=str(file_path), cover_image_path=None)
         db = _FakeAsyncSession(scalar_value=0, rows=[document])
 
         with patch.object(
@@ -382,7 +482,9 @@ class TestDeleteDocument:
 
     @pytest.mark.asyncio
     async def test_missing_disk_file_does_not_raise(self, upload_dir):
-        document = SimpleNamespace(id=8, file_path=str(upload_dir / "ghost.txt"))
+        document = SimpleNamespace(
+            id=8, file_path=str(upload_dir / "ghost.txt"), cover_image_path=None
+        )
         db = _FakeAsyncSession(scalar_value=0, rows=[document])
 
         with patch.object(
@@ -397,7 +499,9 @@ class TestDeleteDocument:
     async def test_vector_store_failure_is_swallowed(self, upload_dir):
         file_path = upload_dir / "another.txt"
         file_path.write_text("content")
-        document = SimpleNamespace(id=9, file_path=str(file_path))
+        document = SimpleNamespace(
+            id=9, file_path=str(file_path), cover_image_path=None
+        )
         db = _FakeAsyncSession(scalar_value=0, rows=[document])
 
         with patch.object(
@@ -408,6 +512,50 @@ class TestDeleteDocument:
             await delete_document(db, document_id=9)
 
         # 磁盘文件和 DB 记录仍然被清理。
+        assert not file_path.exists()
+        assert db.deleted == [document]
+        assert db.commits == 1
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_cover_file(self, upload_dir, cover_dir):
+        """#48：封面文件随主文件一起清理。"""
+        file_path = upload_dir / "novel.txt"
+        file_path.write_text("content")
+        cover_file = cover_dir / "7.png"
+        cover_file.write_bytes(b"\x89PNG fake")
+        document = SimpleNamespace(
+            id=7,
+            file_path=str(file_path),
+            cover_image_path="covers/7.png",
+        )
+        db = _FakeAsyncSession(scalar_value=0, rows=[document])
+
+        with patch.object(
+            document_service.VectorStoreService, "delete_by_document_id"
+        ):
+            await delete_document(db, document_id=7)
+
+        assert not file_path.exists()
+        assert not cover_file.exists()
+        assert db.deleted == [document]
+
+    @pytest.mark.asyncio
+    async def test_delete_missing_cover_file_is_ignored(self, upload_dir, cover_dir):
+        """#48：封面文件不存在时静默忽略。"""
+        file_path = upload_dir / "novel.txt"
+        file_path.write_text("content")
+        document = SimpleNamespace(
+            id=8,
+            file_path=str(file_path),
+            cover_image_path="covers/ghost.png",
+        )
+        db = _FakeAsyncSession(scalar_value=0, rows=[document])
+
+        with patch.object(
+            document_service.VectorStoreService, "delete_by_document_id"
+        ):
+            await delete_document(db, document_id=8)
+
         assert not file_path.exists()
         assert db.deleted == [document]
         assert db.commits == 1
