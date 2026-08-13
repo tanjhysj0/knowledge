@@ -784,3 +784,185 @@
   flex-direction: column;
   background: #fff;
 }
+
+/* #53：管理端独立布局（左侧菜单 + 右侧内容） */
+.admin-layout {
+  display: flex;
+  min-height: 100vh;
+  background: #f5f5f5;
+}
+
+.admin-sidebar {
+  width: 200px;
+  min-width: 200px;
+  background: #fff;
+  border-right: 1px solid #e0e0e0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 0;
+}
+
+.admin-brand {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1976d2;
+  padding: 8px 20px 20px;
+}
+
+.admin-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 12px;
+}
+
+.admin-menu-item {
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #555;
+  cursor: pointer;
+}
+
+.admin-menu-item:hover {
+  background: #f0f4f8;
+}
+
+.admin-menu-item.active {
+  background: #e3f2fd;
+  color: #1976d2;
+  font-weight: 600;
+}
+
+.admin-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-list-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  margin: 24px 0 12px;
+}
+
+/* #53：小说表单（3 字段：小说名 / 封面 / 文本文件） */
+.novel-form {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.novel-form-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.novel-form-row label,
+.novel-form-label {
+  width: 90px;
+  min-width: 90px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #444;
+  padding-top: 8px;
+}
+
+.novel-form-required {
+  color: #f44336;
+}
+
+.novel-form-row input[type='text'] {
+  flex: 1;
+  max-width: 360px;
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.novel-form-row input[type='text']:focus {
+  outline: none;
+  border-color: #1976d2;
+}
+
+.novel-form-cover {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.novel-form-cover-preview {
+  width: 48px;
+  height: 64px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.novel-form-cover-img {
+  width: 48px;
+  height: 64px;
+  object-fit: cover;
+}
+
+.novel-form-cover-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.novel-form-cover-actions .pagination-btn {
+  padding: 4px 12px;
+}
+
+.novel-form-cover-actions small,
+.novel-form-file small {
+  color: #999;
+  font-size: 12px;
+}
+
+.novel-form-file {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.novel-form-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.novel-submit-btn {
+  padding: 10px 24px;
+  background: #1976d2;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.novel-submit-btn:hover:not(:disabled) {
+  background: #1565c0;
+}
+
+.novel-submit-btn:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}

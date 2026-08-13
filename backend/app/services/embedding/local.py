@@ -51,12 +51,18 @@ class LocalSentenceTransformerProvider:
         return self._dim
 
     def _ensure_model(self) -> SentenceTransformer:
-        """Lazy 加载 sentence-transformers 模型（线程安全、单例）。"""
+        """Lazy 加载 sentence-transformers 模型（线程安全、单例）。
+
+        ``device="cpu"`` 强制 CPU 推理：Apple Silicon 上 PyTorch 的 MPS
+        后端存在随机 SIGSEGV（``MetalShaderLibrary`` 哈希表并发竞态，
+        crash 报告可见），会直接杀死进程。CPU 推理对本项目的短文档
+        embedding 足够快，且与 ``run_in_executor`` 的 CPU 线程池策略一致。
+        """
         if self._model is not None:
             return self._model
         with self._load_lock:
             if self._model is None:
-                self._model = SentenceTransformer(self._model_name)
+                self._model = SentenceTransformer(self._model_name, device="cpu")
         return self._model
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:

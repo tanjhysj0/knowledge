@@ -17,8 +17,10 @@ from app.services.documents import (
     DocumentEmptyError,
     DocumentNotFoundError,
     DocumentParseError,
+    DocumentTitleError,
     delete_document,
     list_documents,
+    update_document,
     upload_document,
 )
 
@@ -310,6 +312,61 @@ class TestUploadDocument:
         assert "milvus down" in str(exc.value)
 
 
+class TestUploadDocumentTitle:
+    """#53：上传时的小说名（title）处理。"""
+
+    async def _upload(self, db, *, filename, title=None):
+        chunks = ["chunk one"]
+        fake_embeddings = [[0.1, 0.2]]
+
+        with patch.object(
+            document_service.DocumentParser, "parse", return_value="text body"
+        ), patch.object(
+            document_service.TextChunker, "chunk", return_value=chunks
+        ), patch.object(
+            document_service, "get_embedding_provider"
+        ) as mock_get_provider, patch.object(
+            document_service.VectorStoreService, "insert"
+        ), patch.object(
+            document_service.VectorStoreService, "__init__", return_value=None
+        ):
+            mock_provider = MagicMock()
+            mock_provider.embed_texts = MagicMock(return_value=fake_embeddings)
+            mock_get_provider.return_value = mock_provider
+
+            return await upload_document(
+                filename=filename,
+                file_ext="txt",
+                content=b"novel bytes",
+                db=db,
+                title=title,
+            )
+
+    @pytest.mark.asyncio
+    async def test_upload_with_title_strips_and_uses_it(self, upload_dir):
+        db = _FakeAsyncSession(scalar_value=0)
+
+        document = await self._upload(db, filename="x.txt", title="  十日终焉  ")
+
+        assert document.title == "十日终焉"
+
+    @pytest.mark.asyncio
+    async def test_upload_without_title_falls_back_to_filename(self, upload_dir):
+        db = _FakeAsyncSession(scalar_value=0)
+
+        document = await self._upload(db, filename="十日终焉.txt", title=None)
+
+        assert document.title == "十日终焉"
+
+    @pytest.mark.asyncio
+    async def test_upload_with_blank_title_falls_back_to_filename(self, upload_dir):
+        db = _FakeAsyncSession(scalar_value=0)
+
+        document = await self._upload(db, filename="novel.txt", title="   ")
+
+        assert document.title == "novel"
+
+
 class TestUploadDocumentCover:
     """#48：双文件上传（正文 + 可选封面）。"""
 
@@ -394,6 +451,115 @@ class TestUploadDocumentCover:
 
         assert db.added == []
         assert list(upload_dir.iterdir()) == []
+
+
+class TestUpdateDocument:
+    """#53：编辑小说——改小说名与换封面。"""
+
+    def _make_doc(self, **kwargs):
+        defaults = dict(
+            id=3,
+            filename="novel.txt",
+            file_type="txt",
+            size=100,
+            file_path="/uploads/novel.txt",
+            chunk_count=2,
+            title="旧名",
+            cover_image_path=None,
+        )
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    @pytest.mark.asyncio
+    async def test_update_title_only_strips_and_saves(self, cover_dir):
+        doc = self._make_doc()
+        db = _FakeAsyncSession(scalar_value=0, rows=[doc])
+
+        updated = await update_document(db, document_id=3, title="  新名  ")
+
+        assert updated.title == "新名"
+        assert doc.title == "新名"
+        assert db.commits == 1
+
+    @pytest.mark.asyncio
+    async def test_update_cover_same_ext_overwrites_file(self, cover_dir):
+        (cover_dir / "3.png").write_bytes(b"old png")
+        doc = self._make_doc(cover_image_path="covers/3.png")
+        db = _FakeAsyncSession(scalar_value=0, rows=[doc])
+
+        updated = await update_document(
+            db, document_id=3, cover_content=b"\x89PNG new", cover_ext="png"
+        )
+
+        assert updated.cover_image_path == "covers/3.png"
+        assert (cover_dir / "3.png").read_bytes() == b"\x89PNG new"
+
+    @pytest.mark.asyncio
+    async def test_update_cover_ext_change_cleans_old_file(self, cover_dir):
+        old_cover = cover_dir / "3.png"
+        old_cover.write_bytes(b"old png")
+        doc = self._make_doc(cover_image_path="covers/3.png")
+        db = _FakeAsyncSession(scalar_value=0, rows=[doc])
+
+        updated = await update_document(
+            db, document_id=3, cover_content=b"\x89PNG new", cover_ext="jpg"
+        )
+
+        assert updated.cover_image_path == "covers/3.jpg"
+        assert not old_cover.exists()
+        assert (cover_dir / "3.jpg").read_bytes() == b"\x89PNG new"
+
+    @pytest.mark.asyncio
+    async def test_update_title_and_cover_together(self, cover_dir):
+        doc = self._make_doc()
+        db = _FakeAsyncSession(scalar_value=0, rows=[doc])
+
+        updated = await update_document(
+            db,
+            document_id=3,
+            title="新名",
+            cover_content=b"\x89PNG new",
+            cover_ext="png",
+        )
+
+        assert updated.title == "新名"
+        assert updated.cover_image_path == "covers/3.png"
+
+    @pytest.mark.asyncio
+    async def test_empty_edit_raises_title_error(self, cover_dir):
+        db = _FakeAsyncSession(scalar_value=0, rows=[self._make_doc()])
+
+        with pytest.raises(DocumentTitleError):
+            await update_document(db, document_id=3)
+
+        assert db.commits == 0
+
+    @pytest.mark.asyncio
+    async def test_blank_title_raises_title_error(self, cover_dir):
+        db = _FakeAsyncSession(scalar_value=0, rows=[self._make_doc()])
+
+        with pytest.raises(DocumentTitleError):
+            await update_document(db, document_id=3, title="   ")
+
+        assert db.commits == 0
+
+    @pytest.mark.asyncio
+    async def test_missing_document_raises_not_found(self, cover_dir):
+        db = _FakeAsyncSession(scalar_value=0, missing=True)
+
+        with pytest.raises(DocumentNotFoundError):
+            await update_document(db, document_id=99, title="x")
+
+    @pytest.mark.asyncio
+    async def test_invalid_cover_ext_raises_type_error(self, cover_dir):
+        db = _FakeAsyncSession(scalar_value=0, rows=[self._make_doc()])
+
+        with pytest.raises(CoverTypeError):
+            await update_document(
+                db, document_id=3, cover_content=b"gif", cover_ext="gif"
+            )
+
+        assert db.commits == 0
 
 
 class TestListDocuments:

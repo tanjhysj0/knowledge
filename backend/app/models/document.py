@@ -8,6 +8,9 @@ class Document(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String(255), nullable=False)
+    # #53：小说名（管理端表单必填；API 缺省时回退文件名去扩展名）。
+    # nullable 保留存量记录兼容，展示层回退 ``filename``。
+    title = Column(String(255), nullable=True)
     file_path = Column(String(512), nullable=False)
     file_type = Column(String(50), nullable=False)
     size = Column(Integer, nullable=False)

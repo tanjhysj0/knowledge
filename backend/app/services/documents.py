@@ -49,6 +49,10 @@ class CoverTooLargeError(DocumentServiceError):
     """封面超过 ``cover_max_size`` 限制（#48）。"""
 
 
+class DocumentTitleError(DocumentServiceError):
+    """小说名为空或非法（#53）。"""
+
+
 # #48：封面扩展名白名单 → 显式 media type（唯一事实源，api/covers.py 复用）。
 ALLOWED_COVER_EXTS = {
     "jpg": "image/jpeg",
@@ -94,12 +98,15 @@ async def upload_document(
     db: AsyncSession,
     cover_content: Optional[bytes] = None,
     cover_ext: Optional[str] = None,
+    title: Optional[str] = None,
 ) -> Document:
     """保存上传文件、解析、分块、写入元数据，并尝试向量存储。
 
     #48：可选封面（``cover_content`` + ``cover_ext`` 成对提供）在正文
     提交落库后写入 ``cover_dir``，封面非法时在前置校验阶段即抛异常，
     不写主文件、不污染 DB。
+
+    #53：``title`` 为小说名；缺省或空白时回退文件名去扩展名。
     """
     # 封面前置校验：非法输入在写主文件/落库前拦截（#48）。
     _validate_cover(cover_content, cover_ext)
@@ -128,6 +135,8 @@ async def upload_document(
 
     document = Document(
         filename=filename,
+        # #53：小说名缺省回退文件名去扩展名。
+        title=title.strip() if title and title.strip() else os.path.splitext(filename)[0],
         file_path=file_path,
         file_type=file_ext,
         size=len(content),
@@ -168,6 +177,61 @@ async def upload_document(
         )
     except Exception as exc:  # noqa: BLE001 — 翻译为业务异常
         raise DocumentEmbeddingError(f"Failed to insert into vector store: {exc}") from exc
+
+    return document
+
+
+async def update_document(
+    db: AsyncSession,
+    document_id: int,
+    *,
+    title: Optional[str] = None,
+    cover_content: Optional[bytes] = None,
+    cover_ext: Optional[str] = None,
+) -> Document:
+    """编辑小说（#53）：仅支持改小说名与换封面，正文不可换。
+
+    ``title`` 提供时更新（strip 后为空抛 :class:`DocumentTitleError`）；
+    ``cover_content`` 提供时写入新封面并清理旧封面文件。两者均未提供时
+    抛 :class:`DocumentTitleError` 视为空编辑。
+    """
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    document = result.scalar_one_or_none()
+    if not document:
+        raise DocumentNotFoundError("Document not found")
+
+    _validate_cover(cover_content, cover_ext)
+
+    if title is None and cover_content is None:
+        raise DocumentTitleError("至少提供小说名或封面中的一个字段")
+
+    if title is not None:
+        trimmed = title.strip()
+        if not trimmed:
+            raise DocumentTitleError("小说名不能为空")
+        if len(trimmed) > 255:
+            raise DocumentTitleError("小说名过长（最多 255 字符）")
+        document.title = trimmed
+
+    # #53：换封面——先写新文件，DB 提交成功后再清理旧文件，避免 commit
+    # 失败时数据库仍指向已被删除的旧封面。
+    replaced_cover = False
+    if cover_content is not None:
+        new_path = await _write_cover(document.id, cover_content, cover_ext)
+        old_path = document.cover_image_path
+        document.cover_image_path = new_path
+        replaced_cover = old_path is not None and old_path != new_path
+
+    await db.commit()
+    await db.refresh(document)
+
+    if replaced_cover:
+        old_full = os.path.join(settings.cover_dir, os.path.basename(old_path))
+        if os.path.exists(old_full):
+            try:
+                os.remove(old_full)
+            except OSError:
+                pass  # 旧封面残留可容忍，不影响数据一致性
 
     return document
 

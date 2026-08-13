@@ -1,7 +1,7 @@
 """文档路由层：仅做 HTTP 适配、依赖注入和服务调用。"""
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -15,6 +15,7 @@ from app.services.documents import (
     DocumentEmptyError,
     DocumentNotFoundError,
     DocumentParseError,
+    DocumentTitleError,
 )
 from app.services import documents as document_service
 
@@ -28,12 +29,15 @@ _ALLOWED_FILE_TYPES = {"txt", "md", "pdf", "docx"}
 async def upload_document(
     file: UploadFile = File(...),
     cover: Optional[UploadFile] = File(None),
+    title: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
     """上传小说正文（必填）与封面（可选，#48）。
 
     校验顺序（#48）：先正文 type/size → 读正文 → 再封面 ext/size → 读封面。
     封面非法返回 400，不落库、不写文件。
+
+    #53：``title`` 为小说名（管理端表单必填）；API 层缺省时回退文件名去扩展名。
     """
     if file.size and file.size > settings.max_file_size:
         raise HTTPException(status_code=400, detail="File too large")
@@ -67,6 +71,7 @@ async def upload_document(
             db=db,
             cover_content=cover_content,
             cover_ext=cover_ext,
+            title=title,
         )
     except CoverTypeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -94,6 +99,50 @@ async def list_documents(
         page=page,
         page_size=page_size,
     )
+
+
+@router.patch("/{document_id}", response_model=DocumentResponse)
+async def update_document(
+    document_id: int,
+    title: Optional[str] = Form(None),
+    cover: Optional[UploadFile] = File(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """编辑小说（#53）：仅改小说名与换封面，正文不可换。
+
+    校验顺序：先封面 ext/size → 读封面 → 服务层编辑（title 缺省表示不修改）。
+    非法输入返回 400；文档不存在返回 404。
+    """
+    cover_content: Optional[bytes] = None
+    cover_ext: Optional[str] = None
+    if cover is not None:
+        cover_ext = cover.filename.rsplit(".", 1)[-1].lower() if "." in cover.filename else ""
+        if cover_ext not in ALLOWED_COVER_EXTS:
+            raise HTTPException(
+                status_code=400, detail=f"Unsupported cover type: {cover_ext}"
+            )
+        if cover.size and cover.size > settings.cover_max_size:
+            raise HTTPException(status_code=400, detail="Cover too large")
+        cover_content = await cover.read()
+        if len(cover_content) > settings.cover_max_size:
+            raise HTTPException(status_code=400, detail="Cover too large")
+
+    try:
+        return await document_service.update_document(
+            db=db,
+            document_id=document_id,
+            title=title,
+            cover_content=cover_content,
+            cover_ext=cover_ext,
+        )
+    except DocumentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DocumentTitleError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except CoverTypeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except CoverTooLargeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.delete("/{document_id}")

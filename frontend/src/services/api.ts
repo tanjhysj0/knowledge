@@ -21,6 +21,7 @@ export const documentApi = {
   upload: async (
     file: File,
     cover: File | null = null,
+    title?: string,
     onProgress?: (progress: UploadProgress) => void
   ): Promise<Document> => {
     const formData = new FormData();
@@ -28,6 +29,10 @@ export const documentApi = {
     // #48：可选封面（封面字段与后端 multipart 字段名一致）
     if (cover) {
       formData.append('cover', cover);
+    }
+    // #53：小说名（管理端表单必填；缺省时后端回退文件名去扩展名）
+    if (title) {
+      formData.append('title', title);
     }
     const response = await api.post<Document>('/documents/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -53,6 +58,24 @@ export const documentApi = {
 
   delete: async (id: number): Promise<void> => {
     await api.delete(`/documents/${id}`);
+  },
+
+  // #53：编辑小说——仅改小说名与换封面，正文不可换。
+  update: async (
+    id: number,
+    payload: { title?: string; cover?: File | null }
+  ): Promise<Document> => {
+    const formData = new FormData();
+    if (payload.title !== undefined) {
+      formData.append('title', payload.title);
+    }
+    if (payload.cover) {
+      formData.append('cover', payload.cover);
+    }
+    const response = await api.patch<Document>(`/documents/${id}`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
   },
 };
 

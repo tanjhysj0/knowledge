@@ -21,6 +21,8 @@ class DocumentResponse(DocumentBase):
     created_at: datetime
     # #47：封面图片相对路径；存量记录为 None。
     cover_image_path: Optional[str] = None
+    # #53：小说名；存量记录为 None，展示层回退 filename。
+    title: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

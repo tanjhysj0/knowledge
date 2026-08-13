@@ -109,7 +109,7 @@ export default function NovelListPage() {
     setUploadProgress(null);
 
     try {
-      const doc = await documentApi.upload(file, pendingCover, (progress) => {
+      const doc = await documentApi.upload(file, pendingCover, undefined, (progress) => {
         setUploadProgress(progress);
       });
       setDocuments((prev) => [doc, ...prev]);

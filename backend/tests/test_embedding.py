@@ -144,8 +144,8 @@ class TestLocalSentenceTransformerProvider:
 
         assert len(vectors) == 2
         assert all(len(v) == 1024 for v in vectors)
-        # 确认 encode 被调用一次，参数正确
-        st_cls.assert_called_once_with("BAAI/bge-m3")
+        # 确认 encode 被调用一次，参数正确（强制 CPU 避免 Apple MPS 崩溃）
+        st_cls.assert_called_once_with("BAAI/bge-m3", device="cpu")
         fake_model.encode.assert_called_once()
         call_kwargs = fake_model.encode.call_args.kwargs
         assert call_kwargs["convert_to_numpy"] is True
