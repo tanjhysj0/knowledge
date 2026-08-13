@@ -16,7 +16,9 @@ interface DocumentSummary {
 async function listDocuments(): Promise<DocumentSummary[]> {
   const ctx = await apiRequest.newContext({ baseURL: BACKEND_BASE });
   try {
-    const res = await ctx.get('/api/documents?page=1&page_size=100');
+    // #63：默认列表只返回 ready 小说，track 需全量视图才能找到刚上传
+    // 仍处于 pending/processing 的文档。
+    const res = await ctx.get('/api/documents?page=1&page_size=100&all_statuses=true');
     expect(res.ok()).toBeTruthy();
     const body = await res.json();
     return body.items || [];

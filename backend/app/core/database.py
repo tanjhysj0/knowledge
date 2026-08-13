@@ -83,6 +83,11 @@ async def init_db():
                 "ADD COLUMN IF NOT EXISTS progress INTEGER "
                 "NOT NULL DEFAULT 100"
             )
+            # #63：documents 表补齐可空错误信息列（处理失败时写入原因）。
+            await conn.exec_driver_sql(
+                "ALTER TABLE documents "
+                "ADD COLUMN IF NOT EXISTS error_message TEXT"
+            )
             # #52：conversations 表补齐客户端隔离与小说绑定两列；
             # 存量会话 client_id 补齐为 'default'、document_id 保持 NULL。
             await conn.exec_driver_sql(

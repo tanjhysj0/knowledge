@@ -23,9 +23,11 @@ class DocumentResponse(DocumentBase):
     cover_image_path: Optional[str] = None
     # #53：小说名；存量记录为 None，展示层回退 filename。
     title: Optional[str] = None
-    # #62：处理状态与进度（0-100）；存量记录为 ready/100。
+    # #62/#63：处理状态与进度（0-100）；存量记录为 ready/100。
     status: Literal["pending", "processing", "ready", "failed"] = "ready"
     progress: int = Field(default=100, ge=0, le=100)
+    # #63：索引处理失败原因（status=failed 时写入）；成功/存量记录为 None。
+    error_message: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -61,8 +61,8 @@ class TestSearchChunks:
 
     def test_search_returns_hits_with_expected_structure(self):
         hits = [
-            _make_hit(1, 0, "chunk A", 0.1),
-            _make_hit(1, 1, "chunk B", 0.2),
+            _make_hit(1, 0, "chunk A", 0.8),
+            _make_hit(1, 1, "chunk B", 0.9),
         ]
         rag, embedding_provider, vector_store = self._build_service(vector_hits=hits)
 
@@ -74,7 +74,7 @@ class TestSearchChunks:
         assert len(results) == 2
         assert results[0]["document_id"] == 1
         assert results[0]["content"] == "chunk A"
-        assert results[0]["distance"] == 0.1
+        assert results[0]["distance"] == 0.8
         # embedding 被调用，参数是 [question]
         embedding_provider.embed_texts.assert_called_once_with(["What is X?"])
         # vector_store.search 拿到 query 向量 + document_ids + top_k
@@ -84,11 +84,14 @@ class TestSearchChunks:
         assert call_kwargs["document_ids"] == [1, 2]
         assert len(call_kwargs["query_embedding"]) == 1024
 
-    def test_filters_out_hits_above_threshold(self):
-        """``distance > RETRIEVAL_SCORE_THRESHOLD`` 的命中被过滤（#32 AC）。"""
+    def test_filters_out_hits_below_threshold(self):
+        """相似度 < ``RETRIEVAL_SCORE_THRESHOLD`` 的命中被过滤。
+
+        pymilvus 对 COSINE metric 的 ``distance`` 字段即相似度（越大越相关）。
+        """
         hits = [
-            _make_hit(1, 0, "relevant", 0.2),  # 留下
-            _make_hit(2, 0, "irrelevant", 0.9),  # 过滤
+            _make_hit(1, 0, "relevant", 0.8),  # 留下
+            _make_hit(2, 0, "irrelevant", 0.2),  # 过滤
             _make_hit(3, 0, "borderline", RETRIEVAL_SCORE_THRESHOLD),  # 留下（边界）
         ]
         rag, embedding_provider, _ = self._build_service(vector_hits=hits)
@@ -99,7 +102,7 @@ class TestSearchChunks:
             results = rag._search_chunks("Q", [1, 2, 3], top_k=5)
 
         assert [r["document_id"] for r in results] == [1, 3]
-        assert all(r["distance"] <= RETRIEVAL_SCORE_THRESHOLD for r in results)
+        assert all(r["distance"] >= RETRIEVAL_SCORE_THRESHOLD for r in results)
 
     def test_keeps_hits_with_none_distance(self):
         """distance 缺失的命中保留（无法判断相关性时保守通过）。"""
@@ -374,4 +377,4 @@ class TestRetrievalScoreThreshold:
 
     def test_threshold_is_positive(self):
         assert RETRIEVAL_SCORE_THRESHOLD > 0
-        assert RETRIEVAL_SCORE_THRESHOLD < 1  # COSINE 距离在 [0, 2] 范围，0.5 是合理截断
+        assert RETRIEVAL_SCORE_THRESHOLD < 1  # COSINE 相似度在 [-1, 1] 范围，0.5 是合理截断

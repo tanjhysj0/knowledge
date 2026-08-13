@@ -1,12 +1,20 @@
-"""文档应用服务：上传、列表、删除。"""
+"""文档应用服务：上传、后台索引、列表、删除。
+
+#63：上传与索引分离——上传只做校验/存文件/落库（``pending``/0）并立即返回；
+解析 → 分块 → embedding → 向量库写入由 :func:`process_document_index`
+在后台任务中完成，逐阶段把进度/状态写回小说表。
+"""
+import asyncio
+import logging
 import os
-from typing import Optional
+from typing import List, Optional
 
 import aiofiles
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.database import get_session_maker
 from app.models.document import Document
 from app.models.schemas import DocumentResponse, PaginatedDocumentsResponse
 from app.services.chunker import TextChunker
@@ -15,6 +23,7 @@ from app.services.parser import DocumentParser
 from app.services.vector_store import VectorStoreService
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 class DocumentServiceError(Exception):
@@ -100,7 +109,11 @@ async def upload_document(
     cover_ext: Optional[str] = None,
     title: Optional[str] = None,
 ) -> Document:
-    """保存上传文件、解析、分块、写入元数据，并尝试向量存储。
+    """保存上传文件并写入元数据，索引处理交由后台任务（#63）。
+
+    只做校验、存文件、落库三步：落库即 ``status=pending``、``progress=0``
+    并立即返回（上传响应秒级）。解析 → 分块 → embedding → 向量库写入由
+    :func:`process_document_index` 在后台完成。
 
     #48：可选封面（``cover_content`` + ``cover_ext`` 成对提供）在正文
     提交落库后写入 ``cover_dir``，封面非法时在前置校验阶段即抛异常，
@@ -117,22 +130,6 @@ async def upload_document(
     async with aiofiles.open(file_path, "wb") as f:
         await f.write(content)
 
-    try:
-        text_content = DocumentParser.parse(file_path, file_ext)
-    except Exception as exc:
-        raise DocumentParseError(str(exc)) from exc
-
-    if not text_content or not text_content.strip():
-        raise DocumentEmptyError("Document is empty or contains no extractable text")
-
-    chunker = TextChunker(
-        chunk_size=settings.chunk_size,
-        overlap=settings.chunk_overlap,
-    )
-    chunks = chunker.chunk(text_content)
-    if not chunks:
-        raise DocumentChunkError("Failed to chunk document content")
-
     document = Document(
         filename=filename,
         # #53：小说名缺省回退文件名去扩展名。
@@ -140,11 +137,10 @@ async def upload_document(
         file_path=file_path,
         file_type=file_ext,
         size=len(content),
-        chunk_count=len(chunks),
-        # #62：上传仍同步处理完才返回，落库即 ready/100；
-        # 异步流转由后续切片引入。
-        status="ready",
-        progress=100,
+        chunk_count=0,
+        # #63：上传落库即 pending/0，索引在后台继续。
+        status="pending",
+        progress=0,
     )
     db.add(document)
     # flush 以生成 document.id（封面文件名 ``covers/{id}.{ext}`` 依赖它）
@@ -159,30 +155,205 @@ async def upload_document(
     await db.commit()
     await db.refresh(document)
 
-    # 向量化：先 embed 再写 Milvus。embedding/向量库异常向上抛转为 5xx（#31）。
-    try:
-        embedding_provider = get_embedding_provider()
-        # embed_texts 是同步 CPU 密集型；放在线程池避免阻塞事件循环。
-        import asyncio
+    return document
 
-        loop = asyncio.get_running_loop()
-        embeddings = await loop.run_in_executor(
+
+# ---------------------------------------------------------------------------
+# #63：后台索引处理（解析 → 分块 → embedding → 向量库写入）
+# ---------------------------------------------------------------------------
+
+# 各阶段的进度落点（0-100）。
+PROGRESS_START = 5      # 进入处理（status=processing）
+PROGRESS_PARSED = 25    # 解析完成
+PROGRESS_CHUNKED = 50   # 分块完成
+PROGRESS_EMBEDDED = 75  # embedding 完成
+PROGRESS_INDEXED = 95   # 向量写入完成
+
+
+async def _load_document(
+    db: AsyncSession, document_id: int
+) -> Optional[Document]:
+    """按 id 取文档；不存在返回 ``None``（处理中删除的检测点）。"""
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    return result.scalar_one_or_none()
+
+
+async def _update_progress(
+    db: AsyncSession,
+    document: Document,
+    *,
+    status: str = "processing",
+    progress: int,
+) -> None:
+    """把当前阶段的状态/进度写回小说表并提交。"""
+    document.status = status
+    document.progress = progress
+    await db.commit()
+
+
+def _delete_vectors_quietly(document_id: int) -> None:
+    """尽力清理该小说的向量（失败/删除竞态的残留清理，失败不阻塞主流程）。
+
+    显式传 ``dim`` 避免在启动恢复路径上首次加载 embedding 模型。
+    """
+    try:
+        VectorStoreService(dim=settings.embedding_dim).delete_by_document_id(
+            document_id
+        )
+    except Exception as exc:  # noqa: BLE001 — 清理失败可容忍
+        logger.warning("vector cleanup for document %s failed: %s", document_id, exc)
+
+
+async def _mark_failed(db: AsyncSession, document_id: int, error: Exception) -> None:
+    """把小说标记为 ``failed`` 并记录错误信息；已被删除则忽略任务结果。
+
+    失败可能发生在向量写入中途：先尽力清理残留向量，避免半成品参与检索。
+    """
+    _delete_vectors_quietly(document_id)
+    document = await _load_document(db, document_id)
+    if document is None:
+        return
+    document.status = "failed"
+    document.error_message = str(error)
+    await db.commit()
+
+
+async def _parse_text(file_path: str, file_ext: str) -> str:
+    """解析正文；异常翻译为 :class:`DocumentParseError`。"""
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(
+            None, DocumentParser.parse, file_path, file_ext
+        )
+    except Exception as exc:
+        raise DocumentParseError(str(exc)) from exc
+
+
+async def _chunk_text(text_content: str) -> List[str]:
+    """按配置分块；同步 CPU 密集调用丢到线程池。"""
+    chunker = TextChunker(
+        chunk_size=settings.chunk_size,
+        overlap=settings.chunk_overlap,
+    )
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, chunker.chunk, text_content)
+
+
+async def _embed_chunks(chunks: List[str]) -> List[List[float]]:
+    """生成 chunks 的 embedding；异常翻译为 :class:`DocumentEmbeddingError`。"""
+    embedding_provider = get_embedding_provider()
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(
             None, embedding_provider.embed_texts, chunks
         )
-    except Exception as exc:  # noqa: BLE001 — 翻译为业务异常
+    except Exception as exc:
         raise DocumentEmbeddingError(f"Failed to generate embeddings: {exc}") from exc
 
-    try:
-        vector_store = VectorStoreService()
-        vector_store.insert(
-            document_id=document.id,
-            chunks=chunks,
-            embeddings=embeddings,
-        )
-    except Exception as exc:  # noqa: BLE001 — 翻译为业务异常
-        raise DocumentEmbeddingError(f"Failed to insert into vector store: {exc}") from exc
 
-    return document
+async def _insert_vectors(
+    document_id: int, chunks: List[str], embeddings: List[List[float]]
+) -> None:
+    """写入 Milvus；异常翻译为 :class:`DocumentEmbeddingError`。"""
+    vector_store = VectorStoreService()
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(
+            None, vector_store.insert, document_id, chunks, embeddings
+        )
+    except Exception as exc:
+        raise DocumentEmbeddingError(
+            f"Failed to insert into vector store: {exc}"
+        ) from exc
+
+
+async def _process_document_index(db: AsyncSession, document_id: int) -> None:
+    """后台索引主流程：解析 → 分块 → embedding → 向量写入，逐阶段写回进度。
+
+    成功：``ready``/100；失败：``failed`` + ``error_message``。小说在
+    处理中被删除时静默退出（忽略任务结果），刚写入的向量一并清理，
+    不产生孤儿数据（#63）。
+    """
+    document = await _load_document(db, document_id)
+    if document is None:
+        # 上传后、处理前已被删除：无任务结果可写。
+        return
+
+    await _update_progress(
+        db, document, status="processing", progress=PROGRESS_START
+    )
+
+    try:
+        text_content = await _parse_text(document.file_path, document.file_type)
+        if not text_content or not text_content.strip():
+            raise DocumentEmptyError(
+                "Document is empty or contains no extractable text"
+            )
+        await _update_progress(db, document, progress=PROGRESS_PARSED)
+
+        chunks = await _chunk_text(text_content)
+        if not chunks:
+            raise DocumentChunkError("Failed to chunk document content")
+        document.chunk_count = len(chunks)
+        await _update_progress(db, document, progress=PROGRESS_CHUNKED)
+
+        embeddings = await _embed_chunks(chunks)
+        await _update_progress(db, document, progress=PROGRESS_EMBEDDED)
+
+        await _insert_vectors(document_id, chunks, embeddings)
+        await _update_progress(db, document, progress=PROGRESS_INDEXED)
+    except Exception as exc:  # noqa: BLE001 — 任何阶段失败都转为 failed 状态
+        await _mark_failed(db, document_id, exc)
+        return
+
+    # 删除竞态补偿：向量写入后复核小说仍存在；已被删则清理刚写入的
+    # 向量并静默退出（delete 端点已删元数据与文件）。
+    if await _load_document(db, document_id) is None:
+        _delete_vectors_quietly(document_id)
+        return
+
+    await _update_progress(db, document, status="ready", progress=100)
+
+
+async def process_document_index(document_id: int) -> None:
+    """后台任务入口：用独立 DB 会话完成索引处理（#63）。
+
+    会话级异常不向外传播（后台任务无调用方）：记录日志，残留的
+    ``processing`` 状态由启动恢复重置并重新入队。
+    """
+    session_maker = get_session_maker()
+    try:
+        async with session_maker() as db:
+            await _process_document_index(db, document_id)
+    except Exception as exc:  # noqa: BLE001 — 后台任务兜底
+        logger.exception("document %s background indexing failed: %s", document_id, exc)
+
+
+async def recover_stale_processing_documents(db: AsyncSession) -> List[int]:
+    """启动恢复（#63）：``processing`` 重置为 ``pending``，返回待重新入队的 id。
+
+    服务重启后残留的 ``processing`` 不留死状态：重置回 ``pending`` 并清掉
+    可能写了一半的向量，由调用方重新入队处理；返回值同时包含全部
+    ``pending`` id（覆盖重启前上传后未及处理的新记录）。
+    """
+    stale_result = await db.execute(
+        select(Document.id).where(Document.status == "processing")
+    )
+    stale_ids = list(stale_result.scalars().all())
+    if stale_ids:
+        await db.execute(
+            update(Document)
+            .where(Document.id.in_(stale_ids))
+            .values(status="pending", progress=0)
+        )
+        await db.commit()
+        for doc_id in stale_ids:
+            _delete_vectors_quietly(doc_id)
+
+    pending_result = await db.execute(
+        select(Document.id).where(Document.status == "pending")
+    )
+    return list(pending_result.scalars().all())
 
 
 async def update_document(
@@ -257,8 +428,13 @@ async def list_documents(
     *,
     page: int = 1,
     page_size: int = 10,
+    all_statuses: bool = False,
 ) -> PaginatedDocumentsResponse:
-    """按创建时间倒序返回分页的文档列表。"""
+    """按创建时间倒序返回分页的文档列表。
+
+    #63：默认仅返回 ``ready`` 小说（前台书架）；``all_statuses=True`` 时
+    返回全量视图（管理端）。
+    """
     if page < 1:
         page = 1
     if page_size < 1:
@@ -266,15 +442,21 @@ async def list_documents(
     if page_size > 100:
         page_size = 100
 
-    count_result = await db.execute(select(func.count(Document.id)))
+    # 前台书架只看到 ready 小说（#63）。
+    ready_only = not all_statuses
+
+    count_stmt = select(func.count(Document.id))
+    if ready_only:
+        count_stmt = count_stmt.where(Document.status == "ready")
+    count_result = await db.execute(count_stmt)
     total = count_result.scalar() or 0
 
     offset = (page - 1) * page_size
+    list_stmt = select(Document).order_by(Document.created_at.desc())
+    if ready_only:
+        list_stmt = list_stmt.where(Document.status == "ready")
     result = await db.execute(
-        select(Document)
-        .order_by(Document.created_at.desc())
-        .offset(offset)
-        .limit(page_size)
+        list_stmt.offset(offset).limit(page_size)
     )
     documents = result.scalars().all()
 

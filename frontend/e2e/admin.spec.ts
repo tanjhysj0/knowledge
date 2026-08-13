@@ -18,7 +18,8 @@ interface DocumentSummary {
 
 async function listDocumentsViaApi(): Promise<DocumentSummary[]> {
   const ctx = await apiRequest.newContext({ baseURL: BACKEND_BASE });
-  const res = await ctx.get('/api/documents?page=1&page_size=100');
+  // #63：管理端全量视图（含 pending/processing/failed）。
+  const res = await ctx.get('/api/documents?page=1&page_size=100&all_statuses=true');
   expect(res.ok()).toBeTruthy();
   const body = await res.json();
   await ctx.dispose();

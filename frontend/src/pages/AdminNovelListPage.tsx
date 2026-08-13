@@ -13,6 +13,14 @@ import { formatDate, formatFileSize, getDisplayTitle } from '../utils/format';
 
 const PAGE_SIZE = 10;
 
+/** #63：处理状态 → 中文标签与徽标样式。 */
+const STATUS_LABELS: Record<Document['status'], string> = {
+  pending: '待处理',
+  processing: '处理中',
+  ready: '已完成',
+  failed: '失败',
+};
+
 /** 列表行封面缩略图：有封面显示 img，无封面显示默认封面图（#53）。 */
 function CoverThumb({ doc }: { doc: Document }) {
   return (
@@ -22,6 +30,20 @@ function CoverThumb({ doc }: { doc: Document }) {
       defaultClassName="doc-item-cover"
       alt={`${getDisplayTitle(doc)} 封面`}
     />
+  );
+}
+
+/** #63：处理状态徽标；pending/processing 附进度百分比。 */
+function StatusBadge({ doc }: { doc: Document }) {
+  const isUnfinished = doc.status === 'pending' || doc.status === 'processing';
+  return (
+    <span
+      className={`doc-status doc-status-${doc.status}`}
+      data-testid="doc-status-badge"
+    >
+      {STATUS_LABELS[doc.status] ?? doc.status}
+      {isUnfinished ? ` ${doc.progress ?? 0}%` : ''}
+    </span>
   );
 }
 
@@ -37,7 +59,8 @@ function NovelList({ onEdit }: { onEdit: (doc: Document) => void }) {
   const fetchDocuments = useCallback(async (page: number) => {
     try {
       setError(null);
-      const response = await documentApi.list(page, PAGE_SIZE);
+      // #63：管理端需要全量视图（含 pending/processing/failed）。
+      const response = await documentApi.list(page, PAGE_SIZE, true);
       setDocuments(response.items);
       setTotal(response.total);
       setTotalPages(response.total_pages);
@@ -51,6 +74,17 @@ function NovelList({ onEdit }: { onEdit: (doc: Document) => void }) {
   useEffect(() => {
     fetchDocuments(1);
   }, [fetchDocuments]);
+
+  // #63：列表中存在未完成索引的小说（pending/processing）时，2s 后自动
+  // 刷新当前页轮询状态；全部终态后停止轮询。
+  useEffect(() => {
+    const hasUnfinished = documents.some(
+      (doc) => doc.status === 'pending' || doc.status === 'processing'
+    );
+    if (!hasUnfinished) return;
+    const timer = setTimeout(() => fetchDocuments(currentPage), 2000);
+    return () => clearTimeout(timer);
+  }, [documents, currentPage, fetchDocuments]);
 
   const handleDelete = async (id: number) => {
     setDeletingId(id);
@@ -88,12 +122,20 @@ function NovelList({ onEdit }: { onEdit: (doc: Document) => void }) {
             <div key={doc.id} className="doc-item" data-testid="novel-list-item">
               <CoverThumb doc={doc} />
               <div className="doc-item-info">
-                <div className="doc-item-name">{getDisplayTitle(doc)}</div>
+                <div className="doc-item-name">
+                  {getDisplayTitle(doc)}
+                  <StatusBadge doc={doc} />
+                </div>
                 <div className="doc-item-meta">
                   <span>{formatFileSize(doc.size)}</span>
                   <span>{formatDate(doc.created_at)}</span>
                   <span>.{doc.file_type.toUpperCase()}</span>
                 </div>
+                {doc.status === 'failed' && doc.error_message && (
+                  <div className="doc-item-error" data-testid="doc-error-message">
+                    {doc.error_message}
+                  </div>
+                )}
               </div>
               <div className="doc-item-actions">
                 <button

@@ -49,6 +49,13 @@ class TestDocumentModelDefaults:
         assert col.server_default.arg.text == "100"
         assert not col.nullable
 
+    def test_error_message_column_nullable_text(self):
+        """#63：error_message 可空，无默认值（成功/存量记录为 NULL）。"""
+        col = Document.__table__.c.error_message
+        assert col.nullable
+        assert col.default is None
+        assert col.server_default is None
+
 
 class TestInitDbMigration:
     """#62：init_db 内联迁移为 documents 表补齐 status/progress 列。"""
@@ -78,3 +85,17 @@ class TestInitDbMigration:
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS progress" in joined
         )
         assert "DEFAULT 100" in joined
+
+    @pytest.mark.asyncio
+    async def test_adds_error_message_column_nullable(self, monkeypatch):
+        """#63：内联迁移为 documents 表补齐可空 error_message 列。"""
+        conn = _FakeConn()
+        monkeypatch.setattr(database, "get_engine", lambda: _FakeEngine(conn))
+
+        await database.init_db()
+
+        joined = "\n".join(conn.statements)
+        assert (
+            "ALTER TABLE documents "
+            "ADD COLUMN IF NOT EXISTS error_message TEXT" in joined
+        )

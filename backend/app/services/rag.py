@@ -10,8 +10,9 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
-# Milvus COSINE metric 下 ``distance = 1 - cosine_similarity``，越小越相似。
-# 大于该阈值的命中视为不相关、过滤掉（避免把无关文档塞进 prompt）。
+# pymilvus ``MilvusClient.search`` 对 COSINE metric 返回的 ``distance`` 字段
+# 实为余弦相似度（越大越相关，值域 [-1, 1]），与 L2 距离语义相反。
+# 相似度低于该阈值的命中视为不相关、过滤掉（避免把无关文档塞进 prompt）。
 RETRIEVAL_SCORE_THRESHOLD = 0.5
 
 
@@ -21,8 +22,9 @@ class RAGService:
     检索链路（#32 真打开）：
 
     1. :meth:`_search_chunks` 把 ``question`` 送 embedding provider 取 query 向量
-    2. 调 :meth:`VectorStoreService.search` 在 Milvus 中按 cosine 距离召回 top-k
-    3. 用 :data:`RETRIEVAL_SCORE_THRESHOLD` 过滤掉距离过大的"假命中"
+    2. 调 :meth:`VectorStoreService.search` 在 Milvus 中按 cosine 相似度召回 top-k
+       （pymilvus 对 COSINE metric 的 ``distance`` 字段即相似度，越大越相关）
+    3. 用 :data:`RETRIEVAL_SCORE_THRESHOLD` 过滤掉相似度过低的"假命中"
     4. 命中非空时拼 :meth:`_build_rag_prompt`；未命中或检索异常时回退
        :meth:`_build_external_prompt`（与历史行为兼容）
     5. ``sources`` 字段按 ``document_id`` 去重，仅返回 ``["doc_<id>", ...]``
@@ -73,11 +75,11 @@ Please answer this question based on your general knowledge."""
     ) -> List[Dict[str, Any]]:
         """同步检索相关 chunks；空问题 / embedding 失败 / 向量库异常都返回 ``[]``。
 
-        命中会按 :data:`RETRIEVAL_SCORE_THRESHOLD`（COSINE distance）过滤：
-        大于阈值的命中视为"假相关"丢弃。
+        命中会按 :data:`RETRIEVAL_SCORE_THRESHOLD`（COSINE 相似度）过滤：
+        相似度低于阈值的命中视为"假相关"丢弃。
 
         mock embedding provider（见 :class:`app.services.embedding.mock`）返回全
-        零向量，在 Milvus COSINE metric 下会触发距离=0 的误命中。该场景
+        零向量，在 Milvus COSINE metric 下会触发相似度 1.0 的误命中。该场景
         （``provider.is_mock`` 为真）下直接短路为空，避免污染 RAG prompt 与
         ``sources``。
         """
@@ -112,8 +114,8 @@ Please answer this question based on your general knowledge."""
 
         filtered: List[Dict[str, Any]] = []
         for hit in raw_hits or []:
-            distance = hit.get("distance")
-            if distance is not None and float(distance) > RETRIEVAL_SCORE_THRESHOLD:
+            similarity = hit.get("distance")
+            if similarity is not None and float(similarity) < RETRIEVAL_SCORE_THRESHOLD:
                 continue
             filtered.append(hit)
         return filtered

@@ -10,6 +10,12 @@ export interface Document {
   cover_image_path?: string | null;
   // #53：小说名（管理端表单必填）；存量/缺省记录为 null，展示层回退 filename。
   title?: string | null;
+  // #62/#63：处理状态与进度（0-100）。上传落库即 pending/0，后台索引
+  // 完成后 ready/100，失败则为 failed。
+  status: 'pending' | 'processing' | 'ready' | 'failed';
+  progress: number;
+  // #63：索引处理失败原因；成功/存量记录为 null。
+  error_message?: string | null;
 }
 
 export interface ChatMessage {

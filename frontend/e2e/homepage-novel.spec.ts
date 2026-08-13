@@ -32,6 +32,26 @@ async function uploadViaApi(
   await ctx.dispose();
 }
 
+/**
+ * #63：轮询默认（ready-only）列表直到该文件出现。
+ * 上传只落库（pending），后台索引完成后才在默认列表可见。
+ */
+async function waitForReadyViaApi(filename: string, timeoutMs = 30_000): Promise<void> {
+  const ctx = await apiRequest.newContext({ baseURL: BACKEND_BASE });
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const res = await ctx.get('/api/documents?page=1&page_size=100');
+    const body = await res.json();
+    const items = (body.items || []) as { filename: string }[];
+    if (items.some((d) => d.filename === filename)) {
+      await ctx.dispose();
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  await ctx.dispose();
+}
+
 // #48：后端只校验封面扩展名与大小，fake PNG 头即可通过。
 const FAKE_PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -45,7 +65,7 @@ cleanupTest.describe('首页书架（纯展示）- E2E (#50)', () => {
     await page.waitForLoadState('networkidle').catch(() => {});
   });
 
-  /** 上传小说并通过刷新使首页书架重新拉取。 */
+  /** 上传小说并等待后台索引完成（ready）后刷新首页书架。 */
   async function seedAndReload(
     page: Page,
     filename: string,
@@ -53,6 +73,8 @@ cleanupTest.describe('首页书架（纯展示）- E2E (#50)', () => {
     cover?: Buffer
   ): Promise<void> {
     await uploadViaApi(filename, `novel body for ${filename}`, title, cover);
+    // #63：上传只落库（pending），索引完成后才出现在默认书架列表。
+    await waitForReadyViaApi(filename);
     await page.reload();
     await page.waitForLoadState('networkidle').catch(() => {});
   }

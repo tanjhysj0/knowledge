@@ -1,7 +1,15 @@
 """文档路由层：仅做 HTTP 适配、依赖注入和服务调用。"""
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -11,10 +19,7 @@ from app.services.documents import (
     ALLOWED_COVER_EXTS,
     CoverTooLargeError,
     CoverTypeError,
-    DocumentChunkError,
-    DocumentEmptyError,
     DocumentNotFoundError,
-    DocumentParseError,
     DocumentTitleError,
 )
 from app.services import documents as document_service
@@ -27,6 +32,7 @@ _ALLOWED_FILE_TYPES = {"txt", "md", "pdf", "docx"}
 
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     cover: Optional[UploadFile] = File(None),
     title: Optional[str] = Form(None),
@@ -38,6 +44,9 @@ async def upload_document(
     封面非法返回 400，不落库、不写文件。
 
     #53：``title`` 为小说名（管理端表单必填）；API 层缺省时回退文件名去扩展名。
+
+    #63：上传与索引分离——落库（pending/0）后立即返回，解析/分块/embedding/
+    向量写入整体移入后台任务。
     """
     if file.size and file.size > settings.max_file_size:
         raise HTTPException(status_code=400, detail="File too large")
@@ -64,7 +73,7 @@ async def upload_document(
             raise HTTPException(status_code=400, detail="Cover too large")
 
     try:
-        return await document_service.upload_document(
+        document = await document_service.upload_document(
             filename=file.filename,
             file_ext=file_ext,
             content=content,
@@ -77,27 +86,26 @@ async def upload_document(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except CoverTooLargeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except DocumentParseError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to parse document: {exc}",
-        ) from exc
-    except DocumentEmptyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except DocumentChunkError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # #63：索引处理移入后台任务；响应只等落库（秒级返回）。
+    background_tasks.add_task(document_service.process_document_index, document.id)
+    return document
 
 
 @router.get("", response_model=PaginatedDocumentsResponse)
 async def list_documents(
     page: int = 1,
     page_size: int = 10,
+    all_statuses: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
+    """#63：前台书架默认仅返回 ``ready`` 小说；``all_statuses=true``
+    时管理端获得全量视图（含 pending/processing/failed）。"""
     return await document_service.list_documents(
         db=db,
         page=page,
         page_size=page_size,
+        all_statuses=all_statuses,
     )
 
 

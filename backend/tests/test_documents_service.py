@@ -1,7 +1,8 @@
 """Unit tests for the documents application service.
 
-覆盖上传、列表与删除逻辑；不依赖真实数据库或向量库，使用内存中的假
-db Session 和 patch 替换纯 I/O 边界。
+覆盖上传（#63 起仅落库 pending/0）、后台索引任务、列表（ready 过滤）与
+删除逻辑；不依赖真实数据库或向量库，使用内存中的假 db Session 和 patch
+替换纯 I/O 边界。
 """
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
@@ -18,9 +19,12 @@ from app.services.documents import (
     DocumentNotFoundError,
     DocumentParseError,
     DocumentTitleError,
+    _process_document_index,
     delete_document,
     get_document,
     list_documents,
+    process_document_index,
+    recover_stale_processing_documents,
     update_document,
     upload_document,
 )
@@ -77,6 +81,7 @@ class _FakeAsyncSession:
         self.refreshes: list = []
         self.scalar_value = scalar_value
         self.rows = [] if missing else (rows or [])
+        self.statements: list = []
         self._next_id = 1
 
     def add(self, obj):
@@ -98,6 +103,7 @@ class _FakeAsyncSession:
 
     async def execute(self, statement):
         sql = str(statement)
+        self.statements.append(sql)
         if "count(" in sql.lower():
             return _FakeExecuteResult(value=self.scalar_value)
         # SELECT FROM documents ... ORDER BY ...
@@ -133,29 +139,21 @@ def cover_dir(tmp_path, monkeypatch):
 
 
 class TestUploadDocument:
-    """上传流程：保存、解析、分块、落 DB、尝试向量库。"""
+    """上传流程：校验、存文件、落库 pending/0（#63，索引移后台）。"""
 
     @pytest.mark.asyncio
-    async def test_success_persists_metadata_and_invokes_vector_store(self, upload_dir):
+    async def test_success_persists_metadata_pending_without_indexing(self, upload_dir):
         db = _FakeAsyncSession(scalar_value=0)
-        chunks = ["chunk one", "chunk two"]
-        fake_embeddings = [[0.1, 0.2], [0.3, 0.4]]
 
         with patch.object(
-            document_service.DocumentParser, "parse", return_value="text body"
-        ), patch.object(
-            document_service.TextChunker, "chunk", return_value=chunks
-        ), patch.object(
+            document_service.DocumentParser, "parse"
+        ) as mock_parse, patch.object(
+            document_service.TextChunker, "chunk"
+        ) as mock_chunk, patch.object(
             document_service, "get_embedding_provider"
         ) as mock_get_provider, patch.object(
             document_service.VectorStoreService, "insert"
-        ) as mock_insert, patch.object(
-            document_service.VectorStoreService, "__init__", return_value=None
-        ):
-            mock_provider = MagicMock()
-            mock_provider.embed_texts = MagicMock(return_value=fake_embeddings)
-            mock_get_provider.return_value = mock_provider
-
+        ) as mock_insert:
             document = await upload_document(
                 filename="hello.txt",
                 file_ext="txt",
@@ -166,185 +164,32 @@ class TestUploadDocument:
         assert document.filename == "hello.txt"
         assert document.file_type == "txt"
         assert document.size == len(b"hello bytes")
-        assert document.chunk_count == len(chunks)
-        # #62：当前上传路径同步处理完才返回，落库即 ready/100。
-        assert document.status == "ready"
-        assert document.progress == 100
+        assert document.chunk_count == 0
+        # #63：上传落库即 pending/0，索引在后台继续。
+        assert document.status == "pending"
+        assert document.progress == 0
+        assert document.error_message is None
         assert db.commits == 1
         assert db.refreshes == [document]
         assert (upload_dir / "hello.txt").read_bytes() == b"hello bytes"
-        # 验证 embedding provider 被调用，且 chunks 原样下传
-        mock_provider.embed_texts.assert_called_once_with(chunks)
-        # 验证 insert 收到真 embeddings（不是空 list）
-        mock_insert.assert_called_once_with(
-            document_id=document.id,
-            chunks=chunks,
-            embeddings=fake_embeddings,
-        )
-
-    @pytest.mark.asyncio
-    async def test_parse_failure_raises_service_error(self, upload_dir):
-        db = _FakeAsyncSession()
-
-        with patch.object(
-            document_service.DocumentParser,
-            "parse",
-            side_effect=ValueError("boom"),
-        ):
-            with pytest.raises(DocumentParseError) as exc:
-                await upload_document(
-                    filename="bad.txt",
-                    file_ext="txt",
-                    content=b"x",
-                    db=db,
-                )
-        assert "boom" in str(exc.value)
-
-    @pytest.mark.asyncio
-    async def test_empty_content_raises_empty_error(self, upload_dir):
-        db = _FakeAsyncSession()
-
-        with patch.object(
-            document_service.DocumentParser, "parse", return_value=""
-        ):
-            with pytest.raises(DocumentEmptyError):
-                await upload_document(
-                    filename="empty.txt",
-                    file_ext="txt",
-                    content=b"",
-                    db=db,
-                )
-
-    @pytest.mark.asyncio
-    async def test_whitespace_only_content_raises_empty_error(self, upload_dir):
-        db = _FakeAsyncSession()
-
-        with patch.object(
-            document_service.DocumentParser, "parse", return_value="   \n\t "
-        ):
-            with pytest.raises(DocumentEmptyError):
-                await upload_document(
-                    filename="ws.txt",
-                    file_ext="txt",
-                    content=b" ",
-                    db=db,
-                )
-
-    @pytest.mark.asyncio
-    async def test_no_chunks_raises_chunk_error(self, upload_dir):
-        db = _FakeAsyncSession()
-
-        with patch.object(
-            document_service.DocumentParser, "parse", return_value="text"
-        ), patch.object(
-            document_service.TextChunker, "chunk", return_value=[]
-        ):
-            with pytest.raises(DocumentChunkError):
-                await upload_document(
-                    filename="nothing.txt",
-                    file_ext="txt",
-                    content=b"text",
-                    db=db,
-                )
-
-    @pytest.mark.asyncio
-    async def test_embedding_provider_failure_raises_service_error(self, upload_dir):
-        """``embed_texts`` 抛异常时必须以 ``DocumentEmbeddingError`` 向上抛（#31）。"""
-        db = _FakeAsyncSession()
-        chunks = ["c1", "c2"]
-
-        with patch.object(
-            document_service.DocumentParser, "parse", return_value="text"
-        ), patch.object(
-            document_service.TextChunker, "chunk", return_value=chunks
-        ), patch.object(
-            document_service, "get_embedding_provider"
-        ) as mock_get_provider, patch.object(
-            document_service.VectorStoreService, "insert"
-        ) as mock_insert:
-            mock_provider = MagicMock()
-            mock_provider.embed_texts = MagicMock(
-                side_effect=RuntimeError("model down")
-            )
-            mock_get_provider.return_value = mock_provider
-
-            with pytest.raises(DocumentEmbeddingError) as exc:
-                await upload_document(
-                    filename="ok.txt",
-                    file_ext="txt",
-                    content=b"text",
-                    db=db,
-                )
-
-        assert "model down" in str(exc.value)
-        # metadata 仍然落库（PG commit 已发生）；向量库未被调用
-        assert db.commits == 1
+        # 解析/分块/embedding/向量库均不发生在上传路径上
+        mock_parse.assert_not_called()
+        mock_chunk.assert_not_called()
+        mock_get_provider.assert_not_called()
         mock_insert.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_vector_store_insert_failure_raises_service_error(self, upload_dir):
-        """``vector_store.insert`` 抛异常时也必须冒泡（#31）。"""
-        db = _FakeAsyncSession()
-        chunks = ["c1"]
-        fake_embeddings = [[0.5, 0.6]]
-
-        with patch.object(
-            document_service.DocumentParser, "parse", return_value="text"
-        ), patch.object(
-            document_service.TextChunker, "chunk", return_value=chunks
-        ), patch.object(
-            document_service, "get_embedding_provider"
-        ) as mock_get_provider, patch.object(
-            document_service.VectorStoreService, "__init__", return_value=None
-        ), patch.object(
-            document_service.VectorStoreService,
-            "insert",
-            side_effect=RuntimeError("milvus down"),
-        ):
-            mock_provider = MagicMock()
-            mock_provider.embed_texts = MagicMock(return_value=fake_embeddings)
-            mock_get_provider.return_value = mock_provider
-
-            with pytest.raises(DocumentEmbeddingError) as exc:
-                await upload_document(
-                    filename="ok.txt",
-                    file_ext="txt",
-                    content=b"text",
-                    db=db,
-                )
-
-        assert "milvus down" in str(exc.value)
 
 
 class TestUploadDocumentTitle:
     """#53：上传时的小说名（title）处理。"""
 
     async def _upload(self, db, *, filename, title=None):
-        chunks = ["chunk one"]
-        fake_embeddings = [[0.1, 0.2]]
-
-        with patch.object(
-            document_service.DocumentParser, "parse", return_value="text body"
-        ), patch.object(
-            document_service.TextChunker, "chunk", return_value=chunks
-        ), patch.object(
-            document_service, "get_embedding_provider"
-        ) as mock_get_provider, patch.object(
-            document_service.VectorStoreService, "insert"
-        ), patch.object(
-            document_service.VectorStoreService, "__init__", return_value=None
-        ):
-            mock_provider = MagicMock()
-            mock_provider.embed_texts = MagicMock(return_value=fake_embeddings)
-            mock_get_provider.return_value = mock_provider
-
-            return await upload_document(
-                filename=filename,
-                file_ext="txt",
-                content=b"novel bytes",
-                db=db,
-                title=title,
-            )
+        return await upload_document(
+            filename=filename,
+            file_ext="txt",
+            content=b"novel bytes",
+            db=db,
+            title=title,
+        )
 
     @pytest.mark.asyncio
     async def test_upload_with_title_strips_and_uses_it(self, upload_dir):
@@ -381,32 +226,14 @@ class TestUploadDocumentCover:
         cover_content=None,
         cover_ext=None,
     ):
-        chunks = ["chunk one"]
-        fake_embeddings = [[0.1, 0.2]]
-
-        with patch.object(
-            document_service.DocumentParser, "parse", return_value="text body"
-        ), patch.object(
-            document_service.TextChunker, "chunk", return_value=chunks
-        ), patch.object(
-            document_service, "get_embedding_provider"
-        ) as mock_get_provider, patch.object(
-            document_service.VectorStoreService, "insert"
-        ), patch.object(
-            document_service.VectorStoreService, "__init__", return_value=None
-        ):
-            mock_provider = MagicMock()
-            mock_provider.embed_texts = MagicMock(return_value=fake_embeddings)
-            mock_get_provider.return_value = mock_provider
-
-            return await upload_document(
-                filename="novel.txt",
-                file_ext="txt",
-                content=b"novel bytes",
-                db=db,
-                cover_content=cover_content,
-                cover_ext=cover_ext,
-            )
+        return await upload_document(
+            filename="novel.txt",
+            file_ext="txt",
+            content=b"novel bytes",
+            db=db,
+            cover_content=cover_content,
+            cover_ext=cover_ext,
+        )
 
     @pytest.mark.asyncio
     async def test_upload_with_cover_sets_cover_image_path(self, upload_dir, cover_dir):
@@ -657,6 +484,383 @@ class TestListDocuments:
         response = await list_documents(db, page=1, page_size=500)
 
         assert response.page_size == 100
+
+    @pytest.mark.asyncio
+    async def test_default_lists_only_ready_documents(self):
+        """#63：前台书架默认仅返回 ready 小说。"""
+        db = _FakeAsyncSession(scalar_value=0, rows=[])
+
+        await list_documents(db)
+
+        # 计数与列表两条语句都带 ``status =`` 过滤（WHERE 子句）。
+        assert all("documents.status =" in sql.lower() for sql in db.statements)
+        assert len(db.statements) == 2
+
+    @pytest.mark.asyncio
+    async def test_all_statuses_skips_ready_filter(self):
+        """#63：管理端全量视图不带 ready 过滤。"""
+        db = _FakeAsyncSession(scalar_value=0, rows=[])
+
+        await list_documents(db, all_statuses=True)
+
+        # select(Document) 的 SELECT 列表本身含 status 列，但 WHERE 不应有过滤。
+        assert all("documents.status =" not in sql.lower() for sql in db.statements)
+        assert len(db.statements) == 2
+
+
+class _ProgressLoggingSession(_FakeAsyncSession):
+    """记录每次 commit 时目标文档的 (status, progress) 快照。"""
+
+    def __init__(self, document):
+        super().__init__(scalar_value=0, rows=[document])
+        self._document = document
+        self.progress_log: list = []
+
+    async def commit(self):
+        self.commits += 1
+        self.progress_log.append((self._document.status, self._document.progress))
+
+
+class _DisappearingSession(_FakeAsyncSession):
+    """前 ``keep_rows`` 次查询返回文档，之后视为已删除返回空。"""
+
+    def __init__(self, document, keep_rows: int):
+        super().__init__(scalar_value=0, rows=[document])
+        self._document = document
+        self._keep_rows = keep_rows
+        self._loads = 0
+
+    async def execute(self, statement):
+        self._loads += 1
+        if self._loads > self._keep_rows:
+            return _FakeExecuteResult(rows=[])
+        return _FakeExecuteResult(rows=[self._document])
+
+
+def _make_doc(**kwargs):
+    defaults = dict(
+        id=5,
+        filename="novel.txt",
+        file_type="txt",
+        size=100,
+        file_path="/uploads/novel.txt",
+        chunk_count=0,
+        title="十日终焉",
+        cover_image_path=None,
+        status="pending",
+        progress=0,
+        error_message=None,
+    )
+    defaults.update(kwargs)
+    return SimpleNamespace(**defaults)
+
+
+class TestProcessDocumentIndex:
+    """#63：后台索引任务——分阶段进度、ready/failed 终态与删除竞态。"""
+
+    async def _run(
+        self,
+        db,
+        *,
+        parse_text="text body",
+        chunks=None,
+        embed=None,
+        embed_error=None,
+        insert_error=None,
+    ):
+        """执行后台索引主流程，patch 全部 I/O 边界。"""
+        if chunks is None:
+            chunks = ["chunk one", "chunk two"]
+        if embed is None:
+            embed = [[0.1, 0.2], [0.3, 0.4]]
+
+        with patch.object(
+            document_service.DocumentParser, "parse", return_value=parse_text
+        ), patch.object(
+            document_service.TextChunker, "chunk", return_value=chunks
+        ), patch.object(
+            document_service, "get_embedding_provider"
+        ) as mock_get_provider, patch.object(
+            document_service.VectorStoreService, "insert"
+        ) as mock_insert, patch.object(
+            document_service.VectorStoreService, "__init__", return_value=None
+        ):
+            mock_provider = MagicMock()
+            if embed_error is not None:
+                mock_provider.embed_texts = MagicMock(side_effect=embed_error)
+            else:
+                mock_provider.embed_texts = MagicMock(return_value=embed)
+            mock_get_provider.return_value = mock_provider
+            if insert_error is not None:
+                mock_insert.side_effect = insert_error
+
+            await _process_document_index(db, document_id=5)
+
+        return mock_insert
+
+    @pytest.mark.asyncio
+    async def test_success_stages_progress_and_ends_ready(self):
+        doc = _make_doc()
+        db = _ProgressLoggingSession(doc)
+        chunks = ["c1", "c2"]
+        embeddings = [[0.1], [0.2]]
+
+        mock_insert = await self._run(db, chunks=chunks, embed=embeddings)
+
+        assert doc.status == "ready"
+        assert doc.progress == 100
+        assert doc.chunk_count == 2
+        assert doc.error_message is None
+        # 进度单调推进：processing/5 → 25 → 50 → 75 → 95 → ready/100
+        assert [p for _, p in db.progress_log] == [5, 25, 50, 75, 95, 100]
+        assert db.progress_log[0][0] == "processing"
+        assert db.progress_log[-1][0] == "ready"
+        mock_insert.assert_called_once_with(5, chunks, embeddings)
+
+    @pytest.mark.asyncio
+    async def test_parse_failure_marks_failed_with_error_message(self):
+        doc = _make_doc()
+        db = _ProgressLoggingSession(doc)
+
+        with patch.object(
+            document_service.DocumentParser, "parse",
+            side_effect=ValueError("boom"),
+        ), patch.object(
+            document_service, "_delete_vectors_quietly"
+        ) as mock_cleanup:
+            await _process_document_index(db, document_id=5)
+
+        assert doc.status == "failed"
+        assert "boom" in doc.error_message
+        # 失败态不影响其他小说处理：异常被吞掉转为状态，不外抛
+        mock_cleanup.assert_called_once_with(5)
+
+    @pytest.mark.asyncio
+    async def test_empty_content_marks_failed(self):
+        doc = _make_doc()
+        db = _ProgressLoggingSession(doc)
+
+        with patch.object(
+            document_service, "_delete_vectors_quietly"
+        ):
+            await self._run(db, parse_text="   \n\t ")
+
+        assert doc.status == "failed"
+        assert "empty" in doc.error_message.lower()
+
+    @pytest.mark.asyncio
+    async def test_no_chunks_marks_failed(self):
+        doc = _make_doc()
+        db = _ProgressLoggingSession(doc)
+
+        with patch.object(
+            document_service, "_delete_vectors_quietly"
+        ):
+            await self._run(db, chunks=[])
+
+        assert doc.status == "failed"
+        assert "chunk" in doc.error_message.lower()
+
+    @pytest.mark.asyncio
+    async def test_embedding_failure_marks_failed(self):
+        doc = _make_doc()
+        db = _ProgressLoggingSession(doc)
+
+        with patch.object(
+            document_service, "_delete_vectors_quietly"
+        ):
+            await self._run(db, embed_error=RuntimeError("model down"))
+
+        assert doc.status == "failed"
+        assert "model down" in doc.error_message
+
+    @pytest.mark.asyncio
+    async def test_vector_insert_failure_marks_failed(self):
+        doc = _make_doc()
+        db = _ProgressLoggingSession(doc)
+
+        with patch.object(
+            document_service, "_delete_vectors_quietly"
+        ) as mock_cleanup:
+            await self._run(db, insert_error=RuntimeError("milvus down"))
+
+        assert doc.status == "failed"
+        assert "milvus down" in doc.error_message
+        mock_cleanup.assert_called_once_with(5)
+
+    @pytest.mark.asyncio
+    async def test_document_deleted_mid_processing_ignores_result(self):
+        """#63：处理中删除——忽略后台任务结果，向量不残留。"""
+        doc = _make_doc()
+        # 第一次 load 命中后，后续 load 都返回空（模拟并发删除）。
+        db = _DisappearingSession(doc, keep_rows=1)
+
+        with patch.object(
+            document_service, "_delete_vectors_quietly"
+        ) as mock_cleanup:
+            await self._run(db)
+
+        # 已删除的小说不被标记 failed，也不走到 ready 终态
+        assert doc.status != "failed"
+        assert doc.error_message is None
+        # 刚写入的向量被清理，不产生孤儿数据
+        mock_cleanup.assert_called_once_with(5)
+
+    @pytest.mark.asyncio
+    async def test_stale_row_commit_error_is_swallowed(self):
+        """并发删除导致 commit 抛 StaleDataError 时不外抛（任务结果被忽略）。"""
+        doc = _make_doc()
+        # 第一次 load 命中（进入 processing），之后 load 视为已删除。
+        db = _DisappearingSession(doc, keep_rows=1)
+
+        # 第一次 commit（进入 processing）成功，之后视作行已被并发删除。
+        commit_calls = {"count": 0}
+
+        async def _commit_or_raise():
+            from sqlalchemy.orm.exc import StaleDataError
+
+            commit_calls["count"] += 1
+            if commit_calls["count"] > 1:
+                raise StaleDataError("expected to update 1 row(s); 0 were matched")
+
+        db.commit = _commit_or_raise  # type: ignore[method-assign]
+
+        with patch.object(
+            document_service, "_delete_vectors_quietly"
+        ) as mock_cleanup:
+            await self._run(db)
+
+        # 不外抛即视为通过；已删除的小说不被打上 failed 标记
+        assert doc.status != "failed"
+        mock_cleanup.assert_called_once_with(5)
+
+
+class _FakeSessionMaker:
+    """假 session maker：``session_maker()`` 返回支持 async with 的会话。"""
+
+    def __init__(self, session):
+        self._session = session
+
+    def __call__(self):
+        return self._session
+
+
+class _AsyncCtxSession(_FakeAsyncSession):
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+
+class TestProcessDocumentIndexEntry:
+    """#63：后台任务入口——独立 DB 会话的创建与异常兜底。"""
+
+    @pytest.mark.asyncio
+    async def test_entry_uses_dedicated_session(self):
+        doc = _make_doc()
+        session = _AsyncCtxSession(scalar_value=0, rows=[doc])
+
+        with patch.object(
+            document_service,
+            "get_session_maker",
+            return_value=_FakeSessionMaker(session),
+        ), patch.object(
+            document_service.DocumentParser, "parse", return_value="text body"
+        ), patch.object(
+            document_service.TextChunker, "chunk", return_value=["c1"]
+        ), patch.object(
+            document_service, "get_embedding_provider"
+        ) as mock_get_provider, patch.object(
+            document_service.VectorStoreService, "insert"
+        ), patch.object(
+            document_service.VectorStoreService, "__init__", return_value=None
+        ):
+            mock_provider = MagicMock()
+            mock_provider.embed_texts = MagicMock(return_value=[[0.1]])
+            mock_get_provider.return_value = mock_provider
+
+            await process_document_index(5)
+
+        assert doc.status == "ready"
+        assert doc.progress == 100
+
+    @pytest.mark.asyncio
+    async def test_entry_swallows_session_failure(self):
+        """会话级异常不外抛（后台任务无调用方），仅记录日志。"""
+
+        class _BrokenMaker:
+            def __call__(self):
+                raise RuntimeError("db down")
+
+        with patch.object(
+            document_service,
+            "get_session_maker",
+            return_value=_BrokenMaker(),
+        ):
+            # 不外抛即视为通过
+            await process_document_index(5)
+
+
+class _RecoverySession(_FakeAsyncSession):
+    """按语句内容返回 stale processing id 或 pending id。"""
+
+    def __init__(self, stale_ids, pending_ids):
+        super().__init__()
+        self._stale_ids = list(stale_ids)
+        self._pending_ids = list(pending_ids)
+        self.update_statements: list = []
+
+    async def execute(self, statement):
+        sql = str(statement).lower()
+        self.statements.append(sql)
+        # 编译后的参数里才看得到绑定的状态值（str() 只渲染占位符）。
+        params = dict(statement.compile().params)
+        values = " ".join(str(v) for v in params.values())
+        if "update" in sql:
+            self.update_statements.append(sql)
+            return _FakeExecuteResult()
+        if "processing" in values:
+            return _FakeExecuteResult(rows=self._stale_ids)
+        if "pending" in values:
+            return _FakeExecuteResult(rows=self._pending_ids)
+        return _FakeExecuteResult(rows=[])
+
+
+class TestRecoverStaleProcessingDocuments:
+    """#63：启动恢复——processing 重置 pending 并重新入队。"""
+
+    @pytest.mark.asyncio
+    async def test_resets_processing_and_returns_pending_ids(self):
+        db = _RecoverySession(stale_ids=[1, 2], pending_ids=[3, 4])
+
+        with patch.object(
+            document_service, "_delete_vectors_quietly"
+        ) as mock_cleanup:
+            pending = await recover_stale_processing_documents(db)
+
+        assert pending == [3, 4]
+        # 重置语句只覆盖 stale ids，且提交一次
+        assert len(db.update_statements) == 1
+        assert db.commits == 1
+        # 残留 processing 的半成品向量被清理（不留死状态）
+        mock_cleanup.assert_any_call(1)
+        mock_cleanup.assert_any_call(2)
+        assert mock_cleanup.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_no_stale_rows_returns_only_pending(self):
+        db = _RecoverySession(stale_ids=[], pending_ids=[7])
+
+        with patch.object(
+            document_service, "_delete_vectors_quietly"
+        ) as mock_cleanup:
+            pending = await recover_stale_processing_documents(db)
+
+        assert pending == [7]
+        assert db.update_statements == []
+        assert db.commits == 0
+        mock_cleanup.assert_not_called()
 
 
 class TestDeleteDocument:

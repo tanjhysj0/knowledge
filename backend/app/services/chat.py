@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
-from app.models.document import ChatMessage
+from app.models.document import ChatMessage, Document
 from app.services import conversations as conversation_service
 from app.services.conversations import ConversationNotFoundError, touch_conversation
 from app.services.rag import RAGService
@@ -27,6 +27,25 @@ def _join_doc_ids(document_ids: List[int]) -> str | None:
     if not document_ids:
         return None
     return ",".join(str(d) for d in document_ids)
+
+
+async def _filter_ready_document_ids(
+    db: AsyncSession, document_ids: List[int]
+) -> List[int]:
+    """#63：未 ``ready`` 的小说不参与 RAG 检索——检索前只保留 ready 状态的 id。
+
+    后台索引写入向量前，小说处于 pending/processing/failed，不应被检索命中
+    （包括写入中途残留的半成品向量）。空列表原样返回。
+    """
+    if not document_ids:
+        return []
+    result = await db.execute(
+        select(Document.id).where(
+            Document.id.in_(document_ids),
+            Document.status == "ready",
+        )
+    )
+    return list(result.scalars().all())
 
 
 async def _ensure_conversation(db: AsyncSession, conversation_id: int) -> None:
@@ -53,10 +72,11 @@ async def ask(
     await _ensure_conversation(db, conversation_id)
 
     rag_service = RAGService(request=request)
-    # 先检索：拿 sources 与 prompt 构造依据（#32 + #33）
+    # 先检索：拿 sources 与 prompt 构造依据（#32 + #33）；
+    # #63：未 ready 的小说不参与检索。
     search_results = await rag_service.aretrieve(
         question=question,
-        document_ids=document_ids,
+        document_ids=await _filter_ready_document_ids(db, document_ids),
         top_k=5,
     )
     sources = rag_service._dedupe_sources(search_results)
@@ -139,10 +159,11 @@ async def stream_answer(
         context_messages.append({"role": "user", "content": question})
 
         rag_service = RAGService(request=request)
-        # 先检索拿 sources + prompt 构造依据（#32 + #33）。
+        # 先检索拿 sources + prompt 构造依据（#32 + #33）；
+        # #63：未 ready 的小说不参与检索。
         search_results = await rag_service.aretrieve(
             question=question,
-            document_ids=document_ids,
+            document_ids=await _filter_ready_document_ids(db, document_ids),
             top_k=5,
         )
         sources = rag_service._dedupe_sources(search_results)

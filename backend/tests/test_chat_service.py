@@ -68,9 +68,13 @@ class _FakeAsyncSession:
 
     #36：支持会话查找（``get_conversation``）与按 ``conversation_id`` 过滤的
     ``chat_messages`` 查询，使隔离测试不需要真数据库。
+
+    #63：``ready_document_ids`` 模拟 ``documents`` 表查询，仅返回 ready 状态
+    的小说 id（对应 :func:`app.services.chat._filter_ready_document_ids`）。
     """
 
-    def __init__(self, *, history=None, conversations=None, missing_conversation_ids=None):
+    def __init__(self, *, history=None, conversations=None,
+                 missing_conversation_ids=None, ready_document_ids=None):
         self.added: list = []
         self.commits = 0
         self.rollbacks = 0
@@ -78,6 +82,7 @@ class _FakeAsyncSession:
         self._history = history or []
         self._conversations = conversations or []
         self._missing_conv_ids = set(missing_conversation_ids or [])
+        self._ready_document_ids = ready_document_ids or []
         self._next_id = 1
 
     def add(self, obj):
@@ -136,6 +141,9 @@ class _FakeAsyncSession:
                         conv.updated_at = _dt.utcnow()
                     return _FakeExecuteResult(value=conv)
                 return _FakeExecuteResult(value=None)
+            # #63：documents 表查询——仅返回 ready 状态的小说 id（标量）
+            if "from documents" in sql:
+                return _FakeExecuteResult(rows=list(self._ready_document_ids))
         return _FakeExecuteResult(rows=[])
 
 
@@ -155,7 +163,10 @@ class TestAsk:
 
     @pytest.mark.asyncio
     async def test_returns_answer_and_sources_from_rag(self):
-        db = _FakeAsyncSession(conversations=[SimpleNamespace(id=10, message_count=0)])
+        db = _FakeAsyncSession(
+            conversations=[SimpleNamespace(id=10, message_count=0)],
+            ready_document_ids=[1],  # #63：id=1 已 ready，参与检索
+        )
         # chat.py:ask 现在显式调 RAGService.aretrieve + RAGService._llm().chat，
         # 不再调 RAGService.answer（#32 + #33 重构）。
         fake_hits = [{"document_id": 1, "chunk_index": 0, "content": "ctx", "distance": 0.1}]
@@ -187,7 +198,10 @@ class TestAsk:
 
     @pytest.mark.asyncio
     async def test_persists_user_and_assistant_rows_with_doc_ids(self):
-        db = _FakeAsyncSession(conversations=[SimpleNamespace(id=11, message_count=0)])
+        db = _FakeAsyncSession(
+            conversations=[SimpleNamespace(id=11, message_count=0)],
+            ready_document_ids=[2, 3],  # #63：两个小说均已 ready
+        )
         fake_hits = [
             {"document_id": 2, "chunk_index": 0, "content": "x", "distance": 0.1},
             {"document_id": 3, "chunk_index": 0, "content": "y", "distance": 0.2},
@@ -281,6 +295,101 @@ class TestAsk:
         assert db.added == []
         assert db.commits == 0
         mock_instance._llm.assert_not_called()
+
+
+class TestReadyDocumentFilter:
+    """#63：未 ``ready`` 的小说不参与 RAG 检索，但落库消息仍存原始 ids。"""
+
+    @pytest.mark.asyncio
+    async def test_ask_filters_non_ready_documents_before_retrieve(self):
+        db = _FakeAsyncSession(
+            conversations=[SimpleNamespace(id=60, message_count=0)],
+            ready_document_ids=[2],
+        )
+        fake_llm = MagicMock()
+        fake_llm.chat = AsyncMock(return_value="ok")
+
+        with patch.object(chat_service, "RAGService") as MockRAG:
+            mock_instance = MockRAG.return_value
+            mock_instance.aretrieve = AsyncMock(return_value=[
+                {"document_id": 2, "chunk_index": 0, "content": "x", "distance": 0.1}
+            ])
+            mock_instance._llm = MagicMock(return_value=fake_llm)
+            mock_instance._build_rag_prompt = MagicMock(return_value="RAG")
+            mock_instance._build_external_prompt = MagicMock(return_value="EXT")
+            mock_instance._dedupe_sources = RAGService._dedupe_sources
+
+            await ask(
+                question="Q",
+                document_ids=[1, 2, 3],
+                conversation_id=60,
+                db=db,
+            )
+
+        # 仅 ready 的 id=2 参与检索
+        mock_instance.aretrieve.assert_called_once_with(
+            question="Q", document_ids=[2], top_k=5
+        )
+        # 落库的 user 消息仍存原始 ids
+        users = [obj for obj in db.added if obj.role == "user"]
+        assert users[0].document_ids == "1,2,3"
+
+    @pytest.mark.asyncio
+    async def test_ask_all_non_ready_falls_back_to_external_prompt(self):
+        db = _FakeAsyncSession(
+            conversations=[SimpleNamespace(id=61, message_count=0)],
+            ready_document_ids=[],  # 全部未 ready
+        )
+        fake_llm = MagicMock()
+        fake_llm.chat = AsyncMock(return_value="external answer")
+
+        with patch.object(chat_service, "RAGService") as MockRAG:
+            mock_instance = MockRAG.return_value
+            mock_instance.aretrieve = AsyncMock(return_value=[])
+            mock_instance._llm = MagicMock(return_value=fake_llm)
+            mock_instance._build_rag_prompt = MagicMock(return_value="RAG")
+            mock_instance._build_external_prompt = MagicMock(return_value="EXT")
+            mock_instance._dedupe_sources = RAGService._dedupe_sources
+
+            await ask(
+                question="Q",
+                document_ids=[7],
+                conversation_id=61,
+                db=db,
+            )
+
+        mock_instance.aretrieve.assert_called_once_with(
+            question="Q", document_ids=[], top_k=5
+        )
+        mock_instance._build_external_prompt.assert_called_once()
+        mock_instance._build_rag_prompt.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stream_answer_filters_non_ready_documents(self):
+        db = _FakeAsyncSession(
+            conversations=[SimpleNamespace(id=62, message_count=0)],
+            ready_document_ids=[6],
+        )
+
+        async def fake_stream(messages):
+            yield "ok"
+
+        with patch.object(chat_service, "RAGService") as MockRAG, \
+             patch("app.services.rag.RAGService._llm") as mock_llm:
+            mock_instance = MockRAG.return_value
+            mock_instance.aretrieve = AsyncMock(return_value=[])
+            mock_instance._dedupe_sources = RAGService._dedupe_sources
+            mock_instance._build_external_prompt = MagicMock(return_value="EXT")
+            mock_llm.return_value.stream_chat = fake_stream
+
+            await _collect_sse_dicts(
+                stream_answer(question="Q", document_ids=[5, 6],
+                              conversation_id=62, db=db)
+            )
+
+        mock_instance.aretrieve.assert_called_once_with(
+            question="Q", document_ids=[6], top_k=5
+        )
 
 
 class TestStreamAnswerHappyPath:

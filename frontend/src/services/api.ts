@@ -68,9 +68,14 @@ export const documentApi = {
     return response.data;
   },
 
-  list: async (page: number = 1, pageSize: number = 10): Promise<PaginatedDocumentsResponse> => {
+  // #63：``allStatuses`` 为 true 时返回全量视图（管理端）；默认仅 ready（前台书架）。
+  list: async (
+    page: number = 1,
+    pageSize: number = 10,
+    allStatuses: boolean = false
+  ): Promise<PaginatedDocumentsResponse> => {
     const response = await api.get<PaginatedDocumentsResponse>('/documents', {
-      params: { page, page_size: pageSize },
+      params: { page, page_size: pageSize, all_statuses: allStatuses },
     });
     return response.data;
   },
