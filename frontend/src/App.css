@@ -1,55 +1,3 @@
-.app {
-  display: flex;
-  height: 100vh;
-}
-
-.sidebar {
-  width: 280px;
-  background: #fff;
-  border-right: 1px solid #e0e0e0;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-}
-
-.sidebar h2 {
-  margin-bottom: 16px;
-  font-size: 16px;
-  color: #666;
-}
-
-/* #50：首页上传区已移除（管理能力迁至 /admin） */
-
-.doc-list {
-  list-style: none;
-  flex: 1;
-  overflow-y: auto;
-}
-
-.doc-list li {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.doc-list li span {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
-}
-
-.doc-list li button {
-  background: none;
-  border: none;
-  color: #f44336;
-  cursor: pointer;
-  padding: 4px 8px;
-}
-
 .chat-area {
   flex: 1;
   display: flex;
@@ -82,15 +30,6 @@
 
 .chat-header-logo:hover {
   color: #e3f2fd;
-}
-
-.chat-area header button {
-  background: rgba(255,255,255,0.2);
-  border: none;
-  color: #fff;
-  padding: 6px 12px;
-  border-radius: 4px;
-  cursor: pointer;
 }
 
 .messages {
@@ -166,22 +105,6 @@
   }
 }
 
-/* Typing Cursor */
-.typing-cursor {
-  display: inline-block;
-  animation: blink 0.8s infinite;
-  margin-left: 2px;
-}
-
-@keyframes blink {
-  0%, 50% {
-    opacity: 1;
-  }
-  51%, 100% {
-    opacity: 0;
-  }
-}
-
 /* Context Indicator */
 .context-indicator {
   font-size: 12px;
@@ -193,87 +116,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.context-indicator.context-empty {
-  background: #fff3e0;
-  color: #b26a00;
-}
-
-.context-toggle {
-  margin-left: auto;
-  background: #fff;
-  border: 1px solid #1976d2;
-  color: #1976d2;
-  border-radius: 3px;
-  padding: 2px 8px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.context-toggle:hover {
-  background: #1976d2;
-  color: #fff;
-}
-
-/* Document Selector */
-.document-selector {
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-  padding: 8px 12px;
-  margin-bottom: 8px;
-  background: #fafafa;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.document-selector-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 12px;
-  font-weight: 500;
-  color: #555;
-  margin-bottom: 6px;
-}
-
-.document-selector-all {
-  background: none;
-  border: none;
-  color: #1976d2;
-  cursor: pointer;
-  font-size: 12px;
-  padding: 0;
-}
-
-.document-selector-all:hover {
-  text-decoration: underline;
-}
-
-.document-selector-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.document-selector-item label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 0;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.document-selector-item input[type='checkbox'] {
-  cursor: pointer;
-}
-
-.document-selector-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #333;
 }
 
 /* Chat Empty State */
@@ -647,25 +489,6 @@
   color: #666;
 }
 
-.conversation-new-btn {
-  background: #1976d2;
-  border: none;
-  color: #fff;
-  padding: 4px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.conversation-new-btn:hover:not(:disabled) {
-  background: #1565c0;
-}
-
-.conversation-new-btn:disabled {
-  background: #ccc;
-  cursor: not-allowed;
-}
-
 .conversation-list {
   list-style: none;
   margin: 0;
@@ -813,13 +636,6 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 16px;
-}
-
-.admin-list-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #333;
-  margin: 24px 0 12px;
 }
 
 /* #53：小说表单（3 字段：小说名 / 封面 / 文本文件） */
