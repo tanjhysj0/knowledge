@@ -55,5 +55,10 @@ async def init_db():
                 "CREATE INDEX IF NOT EXISTS ix_chat_messages_conversation_id "
                 "ON chat_messages (conversation_id)"
             )
+            # #47：documents 表补齐封面路径列（nullable，存量记录保持空）。
+            await conn.exec_driver_sql(
+                "ALTER TABLE documents "
+                "ADD COLUMN IF NOT EXISTS cover_image_path VARCHAR(512)"
+            )
     except Exception as e:
         print(f"Database initialization skipped: {e}")

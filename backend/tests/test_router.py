@@ -16,6 +16,8 @@ EXPECTED_METHODS = {
     "/api/documents/upload": {"POST"},
     "/api/documents": {"GET"},
     "/api/documents/{document_id}": {"DELETE"},
+    # #47：封面静态资源端点
+    "/api/covers/{filename}": {"GET"},
     "/api/chat": {"POST"},
     "/api/chat/stream": {"POST"},
     # #36：全量 /api/chat/history 废除，统一走 /api/conversations/{id}/messages

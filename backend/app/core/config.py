@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     upload_dir: str = "./uploads"
     max_file_size: int = 10 * 1024 * 1024  # 10MB
 
+    # 封面图片存储（#47）：与小说正文共享 upload 根，但单独子目录。
+    # 默认 5MB，单本封面预期不超过 2-3 MB。
+    cover_dir: str = "./uploads/covers"
+    cover_max_size: int = 5 * 1024 * 1024  # 5MB
+
     # Document Processing
     chunk_size: int = 500
     chunk_overlap: int = 50

@@ -64,6 +64,53 @@ class TestDocumentSchemas:
         assert response.id == 1
         assert response.created_at == now
 
+    def test_document_response_cover_image_path_defaults_none(self):
+        """#47：未提供 cover_image_path 时默认为 None（存量记录兼容）。"""
+        response = DocumentResponse(
+            id=1,
+            filename="test.txt",
+            file_type="txt",
+            size=10,
+            file_path="/uploads/test.txt",
+            chunk_count=1,
+            created_at=datetime.now(),
+        )
+        assert response.cover_image_path is None
+
+    def test_document_response_with_cover_image_path(self):
+        """#47：cover_image_path 可被序列化并往返。"""
+        response = DocumentResponse(
+            id=2,
+            filename="test.txt",
+            file_type="txt",
+            size=10,
+            file_path="/uploads/test.txt",
+            chunk_count=1,
+            created_at=datetime.now(),
+            cover_image_path="covers/2.png",
+        )
+        assert response.cover_image_path == "covers/2.png"
+
+    def test_document_response_validate_from_orm_with_cover(self):
+        """#47：model_validate 从 ORM 对象读取 cover_image_path。"""
+        now = datetime.now()
+        orm_like = type(
+            "Doc",
+            (),
+            {
+                "id": 3,
+                "filename": "test.txt",
+                "file_type": "txt",
+                "size": 10,
+                "file_path": "/uploads/test.txt",
+                "chunk_count": 2,
+                "created_at": now,
+                "cover_image_path": "covers/3.jpg",
+            },
+        )()
+        response = DocumentResponse.model_validate(orm_like)
+        assert response.cover_image_path == "covers/3.jpg"
+
 
 class TestChatSchemas:
     """Tests for Chat schemas."""

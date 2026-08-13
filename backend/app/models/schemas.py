@@ -19,6 +19,8 @@ class DocumentResponse(DocumentBase):
     file_path: str
     chunk_count: int
     created_at: datetime
+    # #47：封面图片相对路径；存量记录为 None。
+    cover_image_path: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

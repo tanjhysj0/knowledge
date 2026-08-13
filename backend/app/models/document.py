@@ -12,6 +12,9 @@ class Document(Base):
     file_type = Column(String(50), nullable=False)
     size = Column(Integer, nullable=False)
     chunk_count = Column(Integer, default=0)
+    # #47：封面图片相对路径（如 ``covers/123.png``），nullable 保留存量记录兼容。
+    # 文件存储于 ``settings.cover_dir``，路径在静态端点白名单内返回。
+    cover_image_path = Column(String(512), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
