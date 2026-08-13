@@ -15,19 +15,12 @@ test.describe('Chat Page - LLM 异常 Banner (Issue #45)', () => {
   test.describe.configure({ mode: 'serial' });
 
   test.beforeEach(async ({ page }) => {
-    // 清理历史会话：残留的历史消息会干扰下方 .message 计数断言。
-    // 本 spec 仅 3 个用例，逐个 DELETE 不会触及 5s 超时。
-    // 已知权衡：并行模式（E2E_WORKERS>1）下可能删除其他 spec 正在使用的
-    // 会话；默认 make test 串行（--workers=1）无此风险。
-    const listRes = await page.request.get('/api/conversations');
-    if (listRes.ok()) {
-      const list: Array<{ id: number }> = await listRes.json();
-      for (const conv of list) {
-        await page.request.delete(`/api/conversations/${conv.id}`).catch(() => {});
-      }
-    }
     await page.goto('/chat');
     await page.waitForSelector('textarea');
+    // 新建一个空会话：历史会话的残留消息会干扰下方 .message 计数断言。
+    // 不做全量 DELETE——并行模式下会删除其他 spec 正在使用的会话（曾导致
+    // api.spec 的 chat 契约 FK violation）。
+    await page.locator('[data-testid="conversation-new"]').click();
     await expect(
       page.locator('[data-testid^="conversation-item-"][data-active="true"]')
     ).toHaveCount(1, { timeout: 5_000 });
