@@ -18,6 +18,17 @@ class Document(Base):
     # #47：封面图片相对路径（如 ``covers/123.png``），nullable 保留存量记录兼容。
     # 文件存储于 ``settings.cover_dir``，路径在静态端点白名单内返回。
     cover_image_path = Column(String(512), nullable=True)
+    # #62：处理状态与进度（上传与索引分离的数据契约地基）。
+    # 当前上传仍同步处理完才返回，落库即 ready/100；
+    # 异步流转（pending/processing/failed）由后续切片引入。
+    # server_default 让 fresh 库 create_all 与存量库内联迁移的
+    # DEFAULT 子句语义一致（数据库侧兜底）。
+    status = Column(
+        String(20), nullable=False, default="ready", server_default="ready"
+    )
+    progress = Column(
+        Integer, nullable=False, default=100, server_default=text("100")
+    )
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

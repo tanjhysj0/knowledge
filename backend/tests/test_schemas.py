@@ -111,6 +111,64 @@ class TestDocumentSchemas:
         response = DocumentResponse.model_validate(orm_like)
         assert response.cover_image_path == "covers/3.jpg"
 
+    def test_document_response_status_progress_default_ready(self):
+        """#62：未提供 status/progress 时默认为 ready/100（存量记录兼容）。"""
+        response = DocumentResponse(
+            id=4,
+            filename="test.txt",
+            file_type="txt",
+            size=10,
+            file_path="/uploads/test.txt",
+            chunk_count=1,
+            created_at=datetime.now(),
+        )
+        assert response.status == "ready"
+        assert response.progress == 100
+
+    def test_document_response_status_progress_serialized(self):
+        """#62：status/progress 可被序列化并往返。"""
+        response = DocumentResponse(
+            id=5,
+            filename="test.txt",
+            file_type="txt",
+            size=10,
+            file_path="/uploads/test.txt",
+            chunk_count=1,
+            created_at=datetime.now(),
+            status="processing",
+            progress=50,
+        )
+        assert response.status == "processing"
+        assert response.progress == 50
+
+    def test_document_response_rejects_invalid_status(self):
+        """#62：status 仅接受 pending/processing/ready/failed 四个枚举值。"""
+        with pytest.raises(ValidationError):
+            DocumentResponse(
+                id=6,
+                filename="test.txt",
+                file_type="txt",
+                size=10,
+                file_path="/uploads/test.txt",
+                chunk_count=1,
+                created_at=datetime.now(),
+                status="bogus",
+            )
+
+    def test_document_response_progress_out_of_range_rejected(self):
+        """#62：progress 仅接受 0-100。"""
+        with pytest.raises(ValidationError):
+            DocumentResponse(
+                id=7,
+                filename="test.txt",
+                file_type="txt",
+                size=10,
+                file_path="/uploads/test.txt",
+                chunk_count=1,
+                created_at=datetime.now(),
+                progress=101,
+            )
+
 
 class TestChatSchemas:
     """Tests for Chat schemas."""

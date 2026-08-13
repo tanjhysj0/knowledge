@@ -167,6 +167,9 @@ class TestUploadDocument:
         assert document.file_type == "txt"
         assert document.size == len(b"hello bytes")
         assert document.chunk_count == len(chunks)
+        # #62：当前上传路径同步处理完才返回，落库即 ready/100。
+        assert document.status == "ready"
+        assert document.progress == 100
         assert db.commits == 1
         assert db.refreshes == [document]
         assert (upload_dir / "hello.txt").read_bytes() == b"hello bytes"

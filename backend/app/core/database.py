@@ -71,6 +71,18 @@ async def init_db():
                 "ALTER TABLE documents "
                 "ADD COLUMN IF NOT EXISTS title VARCHAR(255)"
             )
+            # #62：documents 表补齐处理状态与进度两列（NOT NULL + DEFAULT，
+            # 存量行自动回填为 ready/100，与同步上传落库值一致）。
+            await conn.exec_driver_sql(
+                "ALTER TABLE documents "
+                "ADD COLUMN IF NOT EXISTS status VARCHAR(20) "
+                "NOT NULL DEFAULT 'ready'"
+            )
+            await conn.exec_driver_sql(
+                "ALTER TABLE documents "
+                "ADD COLUMN IF NOT EXISTS progress INTEGER "
+                "NOT NULL DEFAULT 100"
+            )
             # #52：conversations 表补齐客户端隔离与小说绑定两列；
             # 存量会话 client_id 补齐为 'default'、document_id 保持 NULL。
             await conn.exec_driver_sql(

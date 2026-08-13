@@ -7,6 +7,8 @@ import { test, expect } from '@playwright/test';
 // 发出的请求），所以 LLM 对话类契约测试需要从浏览器端发起 fetch，才能被 mock 命中。
 test.describe('Backend API 契约 - E2E', () => {
   test.beforeEach(async ({ page }) => {
+    // chat/stream 等流式契约用例需读完整 SSE 响应，高负载下可能超过默认 5s。
+    test.setTimeout(30_000);
     await page.goto('/');
     await page.waitForLoadState('networkidle').catch(() => {});
   });

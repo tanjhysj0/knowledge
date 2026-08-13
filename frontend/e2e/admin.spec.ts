@@ -115,8 +115,9 @@ cleanupTest.describe('Admin Page（管理端独立路由）- E2E (#54)', () => {
     });
     await submitBtn(page).click();
 
-    // 保存成功后返回列表页
-    await expect(page).toHaveURL(/\/admin$/);
+    // 保存成功后返回列表页。上传含 embedding 推理，高负载下可能超过默认
+    // expect 超时（5s），显式放宽。
+    await expect(page).toHaveURL(/\/admin$/, { timeout: 30_000 });
     await expect(
       page.locator('.doc-item').filter({ hasText: title })
     ).toBeVisible({ timeout: 15_000 });

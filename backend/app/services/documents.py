@@ -141,6 +141,10 @@ async def upload_document(
         file_type=file_ext,
         size=len(content),
         chunk_count=len(chunks),
+        # #62：上传仍同步处理完才返回，落库即 ready/100；
+        # 异步流转由后续切片引入。
+        status="ready",
+        progress=100,
     )
     db.add(document)
     # flush 以生成 document.id（封面文件名 ``covers/{id}.{ext}`` 依赖它）
