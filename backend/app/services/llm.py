@@ -49,7 +49,7 @@ class OpenAIProvider:
             api_key=settings.openai_api_key or "sk-dummy-initial-key",
             base_url=settings.openai_base_url,
         )
-        self._model = settings.openai_model or settings.llm_model
+        self._model = settings.openai_model
 
     async def chat(
         self,

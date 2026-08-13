@@ -17,9 +17,6 @@ class Settings(BaseSettings):
     anthropic_base_url: str = ""
     anthropic_model: str = ""
 
-    # Shared model settings (deprecated, use provider-specific models)
-    llm_model: str = ""
-
     # Milvus
     milvus_host: str = "localhost"
     milvus_port: int = 19530

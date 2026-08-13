@@ -1,7 +1,9 @@
 """统一 API 路由入口的架构与契约测试。"""
 import ast
 from pathlib import Path
+from unittest.mock import MagicMock
 
+import pytest
 from fastapi import FastAPI
 
 from app.api.router import router
@@ -127,21 +129,44 @@ def test_settings_service_reads_selected_provider(monkeypatch):
     assert config.model == "claude-test"
 
 
-def test_settings_service_updates_selected_provider(monkeypatch):
+class _FakeSettingsDb:
+    """settings 服务所需的最小假 db Session（记录 upsert 语句与 commit）。"""
+
+    def __init__(self, row=None):
+        self._row = row
+        self.executed = []
+        self.commits = 0
+
+    async def execute(self, statement):
+        self.executed.append(statement)
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = self._row
+        return result
+
+    async def commit(self):
+        self.commits += 1
+
+
+@pytest.mark.asyncio
+async def test_settings_service_updates_selected_provider(monkeypatch):
     settings = Settings(llm_provider="openai", anthropic_api_key="old-key")
     reset_calls: list[bool] = []
     monkeypatch.setattr(settings_service, "get_settings", lambda: settings)
     monkeypatch.setattr(
         settings_service, "reset_providers", lambda: reset_calls.append(True)
     )
+    db = _FakeSettingsDb()
     update = SettingsUpdate(
         llm_provider="anthropic", llm_api_key="new-secret", llm_model="new-model"
     )
 
-    response = settings_service.update_llm_settings(update)
+    response = await settings_service.update_llm_settings(db=db, update=update)
 
     assert settings.anthropic_api_key == "new-secret"
     assert settings.anthropic_model == "new-model"
     assert response.settings.llm.provider == "anthropic"
     assert response.message == "Settings updated and providers reinitialized"
     assert reset_calls == [True]
+    # #67：双写 DB——单行 upsert 落库。
+    assert db.commits == 1
+    assert len(db.executed) == 1
