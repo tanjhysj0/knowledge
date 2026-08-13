@@ -203,7 +203,9 @@ async def stream_answer(
         }
     except Exception as exc:  # noqa: BLE001 — translate any failure to a single SSE error event
         await db.rollback()
+        # #45 保持与 preflight 拒绝的 error 事件形状一致（``reason`` + ``error``），
+        # 前端 LLMStatus banner 统一用 ``reason`` 作为展示文案。
         yield {
             "event": "error",
-            "data": json.dumps({"error": str(exc)}),
+            "data": json.dumps({"reason": str(exc), "error": str(exc)}, ensure_ascii=False),
         }

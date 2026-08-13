@@ -1,8 +1,25 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { conversationApi, documentApi } from '../services/api';
+import { Link } from 'react-router-dom';
+import { conversationApi, documentApi, llmStatusApi } from '../services/api';
 import type { ChatMessage as ApiChatMessage, Conversation, Document } from '../types';
 import { SSEParser } from '../utils/sseParser';
 import '../App.css';
+
+/** #45 聊天页输入区上方的 LLM 异常 banner。 */
+interface LLMBannerState {
+  message: string;
+  showSettingsLink: boolean;
+}
+
+/** #45 LLM 不可用时由 handleSend 抛出，catch 块据此改走 banner 显示而非通用错误。 */
+class LLMUnavailableError extends Error {
+  readonly showSettingsLink: boolean;
+  constructor(message: string, showSettingsLink: boolean) {
+    super(message);
+    this.name = 'LLMUnavailableError';
+    this.showSettingsLink = showSettingsLink;
+  }
+}
 
 interface ChatMessage {
   id: number;
@@ -45,6 +62,30 @@ export default function ChatPage() {
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // #45：preflight 检出的 LLM 状态 + 用户主动 dismiss 标志。null = 正常无 banner。
+  const [llmBanner, setLlmBanner] = useState<LLMBannerState | null>(null);
+  const [llmBannerDismissed, setLlmBannerDismissed] = useState(false);
+
+  // #45：进入聊天页时拉取 LLM 可用性；未配置立刻显示红字 banner（带"去设置"链接）。
+  useEffect(() => {
+    let cancelled = false;
+    llmStatusApi
+      .get()
+      .then((status) => {
+        if (cancelled) return;
+        if (!status.configured) {
+          setLlmBanner({ message: status.reason, showSettingsLink: true });
+          setLlmBannerDismissed(false);
+        }
+      })
+      .catch((err) => {
+        // 拉取状态失败时不强阻塞对话；用户在 send 时仍会被后端拒绝。
+        console.warn('LLM 状态查询失败：', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 加载可用文档与会话列表（#35）。
   useEffect(() => {
@@ -237,6 +278,8 @@ export default function ChatPage() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    // #45 catch 块需要能清掉本轮助手占位消息，所以提到 try 块外。
+    let assistantId: number | null = null;
 
     try {
       const response = await fetch('/api/chat/stream', {
@@ -251,6 +294,19 @@ export default function ChatPage() {
       });
 
       if (!response.ok) {
+        if (response.status === 503) {
+          // #45 后端 preflight 拒绝：LLM 未配置，提取 reason 后改走 banner。
+          let body: { reason?: string; error?: string } = {};
+          try {
+            body = (await response.json()) as { reason?: string; error?: string };
+          } catch {
+            // 后端未返回合法 JSON 时使用兜底文案。
+          }
+          throw new LLMUnavailableError(
+            body.reason || body.error || 'LLM 不可用',
+            true
+          );
+        }
         throw new Error('请求失败');
       }
 
@@ -259,9 +315,10 @@ export default function ChatPage() {
 
       const decoder = new TextDecoder();
       const parser = new SSEParser();
-      const assistantId = Date.now() + 1;
-      setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '', sources: [] }]);
-
+      // #45 赋值给外层 let，catch 块才能清掉本轮助手占位（不可用 const 重声明）。
+      const newAssistantId = Date.now() + 1;
+      assistantId = newAssistantId;
+      setMessages((prev) => [...prev, { id: newAssistantId, role: 'assistant', content: '', sources: [] }]);
       // 累积本轮的 sources（SSE done 事件一次性下发），用 ref 避免闭包陈旧
       const sourcesRef: { current: string[] } = { current: [] };
 
@@ -270,6 +327,19 @@ export default function ChatPage() {
         if (done) break;
         const text = decoder.decode(value, { stream: true });
         const events = parser.feed(text);
+        // #45 先在 setMessages 回调外捕获 error 事件，throw 才能跳到外层 catch。
+        const errorEvent = events.find((e) => e.event === 'error');
+        if (errorEvent) {
+          const errPayload = errorEvent.data as
+            | { reason?: string; error?: string; content?: string }
+            | null;
+          const reason =
+            errPayload?.reason ||
+            errPayload?.error ||
+            errPayload?.content?.toString() ||
+            '模型返回错误';
+          throw new LLMUnavailableError(reason, false);
+        }
         if (events.length > 0) {
           setMessages((prev) =>
             prev.map((m) => {
@@ -301,8 +371,6 @@ export default function ChatPage() {
                   if (incoming.length > 0) {
                     sourcesRef.current = incoming;
                   }
-                } else if (ev.event === 'error') {
-                  throw new Error(payload?.content?.toString() || '模型返回错误');
                 }
               }
               return { ...m, content, thinking, sources: sourcesRef.current };
@@ -350,6 +418,13 @@ export default function ChatPage() {
     } catch (err: any) {
       if (err?.name === 'AbortError') {
         // 主动取消：忽略错误（典型场景：切换会话时）
+      } else if (err instanceof LLMUnavailableError) {
+        // #45 LLM 不可用：显示红字 banner 并清掉本轮的用户/助手占位消息。
+        setLlmBanner({ message: err.message, showSettingsLink: err.showSettingsLink });
+        setLlmBannerDismissed(false);
+        setMessages((prev) =>
+          prev.filter((m) => m.id !== userMessage.id && m.id !== assistantId)
+        );
       } else {
         setError(err.message || '发送消息失败');
         // Remove the user message if the request failed
@@ -523,6 +598,31 @@ export default function ChatPage() {
 
           <div ref={messagesEndRef} />
         </div>
+
+        {/* #45 LLM 不可用 / 运行时失败的顶部红字 banner */}
+        {llmBanner && !llmBannerDismissed && (
+          <div className="llm-error-banner" data-testid="llm-error-banner" role="alert">
+            <span className="llm-error-banner-text">{llmBanner.message}</span>
+            {llmBanner.showSettingsLink && (
+              <Link
+                to="/settings"
+                className="llm-error-banner-link"
+                data-testid="llm-error-banner-link"
+              >
+                去设置
+              </Link>
+            )}
+            <button
+              type="button"
+              className="llm-error-banner-close"
+              data-testid="llm-error-banner-close"
+              aria-label="关闭"
+              onClick={() => setLlmBannerDismissed(true)}
+            >
+              ×
+            </button>
+          </div>
+        )}
 
         <div className="input-area">
           {contextLabel && (

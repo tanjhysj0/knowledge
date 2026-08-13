@@ -23,6 +23,8 @@ EXPECTED_METHODS = {
     "/api/conversations/{conversation_id}": {"DELETE", "PATCH"},
     "/api/conversations/{conversation_id}/messages": {"GET"},
     "/api/settings": {"GET", "PUT"},
+    # #45：聊天页 preflight 用的 LLM 可用性端点
+    "/api/llm/status": {"GET"},
 }
 
 

@@ -7,6 +7,7 @@ from app.services.llm import (
     AnthropicProvider,
     get_llm_provider,
     reset_providers,
+    is_llm_configured,
 )
 
 
@@ -336,3 +337,92 @@ class TestResetProviders:
             OpenAIProvider()
             # Should have been called twice
             assert mock_openai.call_count == 2
+
+
+class TestIsLLMConfigured:
+    """Tests for is_llm_configured() — #45 preflight availability check."""
+
+    def _patch_settings(self, monkeypatch_target, **fields):
+        """Patch ``get_settings`` inside ``app.services.llm`` with a Settings instance."""
+        from app.core.config import Settings
+
+        defaults = dict(
+            llm_provider="openai",
+            openai_api_key="sk-valid-key",
+            openai_model="gpt-4o-mini",
+            anthropic_api_key="sk-ant-valid",
+            anthropic_model="claude-3-5-sonnet",
+        )
+        defaults.update(fields)
+        instance = Settings(**defaults)
+        monkeypatch_target.setattr(
+            "app.services.llm.get_settings", lambda: instance
+        )
+        return instance
+
+    def test_openai_missing_api_key(self, monkeypatch):
+        self._patch_settings(
+            monkeypatch, llm_provider="openai", openai_api_key="", openai_model="gpt-4o-mini"
+        )
+        configured, reason = is_llm_configured()
+        assert configured is False
+        assert "API Key" in reason or "key" in reason.lower()
+
+    def test_openai_whitespace_api_key(self, monkeypatch):
+        self._patch_settings(
+            monkeypatch, llm_provider="openai", openai_api_key="   ", openai_model="gpt-4o-mini"
+        )
+        configured, reason = is_llm_configured()
+        assert configured is False
+        assert reason
+
+    def test_openai_missing_model(self, monkeypatch):
+        self._patch_settings(
+            monkeypatch, llm_provider="openai", openai_api_key="sk-valid-key", openai_model=""
+        )
+        configured, reason = is_llm_configured()
+        assert configured is False
+        assert "Model" in reason or "model" in reason.lower()
+
+    def test_openai_fully_configured(self, monkeypatch):
+        self._patch_settings(
+            monkeypatch, llm_provider="openai", openai_api_key="sk-valid-key", openai_model="gpt-4o-mini"
+        )
+        configured, reason = is_llm_configured()
+        assert configured is True
+        assert reason == ""
+
+    def test_anthropic_missing_api_key(self, monkeypatch):
+        self._patch_settings(
+            monkeypatch, llm_provider="anthropic", anthropic_api_key="", anthropic_model="claude-3-5-sonnet"
+        )
+        configured, reason = is_llm_configured()
+        assert configured is False
+        assert "API Key" in reason or "key" in reason.lower()
+
+    def test_anthropic_missing_model(self, monkeypatch):
+        self._patch_settings(
+            monkeypatch, llm_provider="anthropic", anthropic_api_key="sk-ant-valid", anthropic_model=""
+        )
+        configured, reason = is_llm_configured()
+        assert configured is False
+        assert "Model" in reason or "model" in reason.lower()
+
+    def test_anthropic_fully_configured(self, monkeypatch):
+        self._patch_settings(
+            monkeypatch,
+            llm_provider="anthropic",
+            anthropic_api_key="sk-ant-valid",
+            anthropic_model="claude-3-5-sonnet",
+        )
+        configured, reason = is_llm_configured()
+        assert configured is True
+        assert reason == ""
+
+    def test_unknown_provider_treated_as_openai(self, monkeypatch):
+        """Unknown provider value falls through to the OpenAI branch."""
+        self._patch_settings(
+            monkeypatch, llm_provider="unknown-thing", openai_api_key="", openai_model=""
+        )
+        configured, _ = is_llm_configured()
+        assert configured is False

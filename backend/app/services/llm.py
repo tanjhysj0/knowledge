@@ -168,7 +168,9 @@ def get_llm_provider(request: Optional[Request] = None) -> LLMProvider:
     process can serve both mock and real traffic safely. The optional
     ``X-E2E-Mock-Thinking: true`` header further requests that the mock
     prepend a ``<think>...</think>`` segment for tests that exercise the
-    thinking-collapse UI.
+    thinking-collapse UI. ``#45`` ``X-E2E-Mock-LLM-Error: true`` 让 mock 在
+    ``chat`` / ``stream_chat`` 抛 ``RuntimeError``，用于稳定测试运行时
+    LLM 不可用路径。
     """
     if (
         request is not None
@@ -178,7 +180,14 @@ def get_llm_provider(request: Optional[Request] = None) -> LLMProvider:
             request.headers.get(mock_llm.E2E_MOCK_THINKING_HEADER, "").lower()
             == "true"
         )
-        return mock_llm.MockLLMProvider(include_thinking=include_thinking)
+        fail_with_error = (
+            request.headers.get(mock_llm.E2E_MOCK_LLM_ERROR_HEADER, "").lower()
+            == "true"
+        )
+        return mock_llm.MockLLMProvider(
+            include_thinking=include_thinking,
+            fail_with_error=fail_with_error,
+        )
     provider_type = settings.llm_provider.lower()
     if provider_type == "anthropic":
         return AnthropicProvider()
@@ -189,6 +198,27 @@ def reset_providers():
     """Clear LLM provider singletons so the next access rebuilds them with current settings."""
     OpenAIProvider._instance = None
     AnthropicProvider._instance = None
+
+
+# #45：preflight 阶段检测当前 LLM Provider 是否具备 API Key + Model；
+# 返回 ``(configured, reason)``。``configured=True`` 时 ``reason`` 为空串。
+def is_llm_configured() -> tuple[bool, str]:
+    current = get_settings()
+    provider_type = current.llm_provider.lower()
+    if provider_type == "anthropic":
+        api_key = current.anthropic_api_key
+        model = current.anthropic_model
+        provider_label = "Anthropic"
+    else:  # openai（默认）
+        api_key = current.openai_api_key
+        model = current.openai_model
+        provider_label = "OpenAI"
+
+    if not api_key or not api_key.strip():
+        return False, f"{provider_label} API Key 未配置"
+    if not model or not model.strip():
+        return False, f"{provider_label} Model 未配置"
+    return True, ""
 
 
 # Backward compatibility alias

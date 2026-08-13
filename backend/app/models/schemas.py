@@ -123,3 +123,12 @@ class SettingsUpdateResponse(BaseModel):
     """PUT /api/settings 的响应载荷。"""
     message: str
     settings: SettingsResponse
+
+
+# #45：聊天页 preflight 用的 LLM 可用性状态。
+class LLMStatusResponse(BaseModel):
+    """``GET /api/llm/status`` 的响应载荷。``reason`` 在 ``configured=True`` 时为空串。"""
+
+    provider: str
+    configured: bool
+    reason: str

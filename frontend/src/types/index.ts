@@ -58,6 +58,13 @@ export interface SettingsUpdate {
   llm_model?: string;
 }
 
+// #45：聊天页 preflight 用的 LLM 可用性。
+export interface LLMStatus {
+  provider: string;
+  configured: boolean;
+  reason: string;
+}
+
 // 会话（#34 / #35）
 export interface Conversation {
   id: number;

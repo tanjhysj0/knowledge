@@ -8,6 +8,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.api import chat as chat_module
 from app.api.chat import chat_stream
 from app.models.schemas import ChatRequest
 from app.services.llm import reset_providers
@@ -32,6 +33,15 @@ def mock_rag_retrieve():
         RAGService, "aretrieve", new=AsyncMock(return_value=[]), create=True
     ):
         yield
+
+
+@pytest.fixture(autouse=True)
+def pass_llm_preflight(monkeypatch):
+    """``#45`` 默认让 ``is_llm_configured`` 在 ``app.api.chat`` 作用域内通过，
+    避免 chat_stream 测试被 preflight 提前拒绝。需要验证 preflight 行为的测试
+    必须在显式 patch 中覆盖本 fixture 的效果。
+    """
+    monkeypatch.setattr(chat_module, "is_llm_configured", lambda: (True, ""))
 
 
 async def _collect_sse_dicts(generator):

@@ -6,6 +6,7 @@ import type {
   Conversation,
   ConversationCreate,
   ConversationUpdate,
+  LLMStatus,
   PaginatedDocumentsResponse,
   UploadProgress,
   SettingsResponse,
@@ -92,6 +93,14 @@ export const settingsApi = {
 
   update: async (settings: SettingsUpdate): Promise<SettingsResponse> => {
     const response = await api.put<SettingsResponse>('/settings', settings);
+    return response.data;
+  },
+};
+
+// #45：聊天页 preflight 用的 LLM 可用性查询。
+export const llmStatusApi = {
+  get: async (): Promise<LLMStatus> => {
+    const response = await api.get<LLMStatus>('/llm/status');
     return response.data;
   },
 };

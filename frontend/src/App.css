@@ -472,6 +472,52 @@
   font-size: 13px;
 }
 
+/* #45 LLM 不可用 / 运行时失败的红字 banner，贴在输入区上方 */
+.llm-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #ffebee;
+  color: #c62828;
+  border-top: 1px solid #f5c2c2;
+  border-bottom: 1px solid #f5c2c2;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.llm-error-banner-text {
+  flex: 1;
+  word-break: break-word;
+}
+
+.llm-error-banner-link {
+  color: #c62828;
+  font-weight: 600;
+  text-decoration: underline;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.llm-error-banner-link:hover {
+  color: #8e0000;
+}
+
+.llm-error-banner-close {
+  background: transparent;
+  border: none;
+  color: #c62828;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 4px;
+}
+
+.llm-error-banner-close:hover {
+  background: rgba(198, 40, 40, 0.12);
+}
+
 /* Empty State */
 .empty-state {
   padding: 32px;
