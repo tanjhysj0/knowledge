@@ -17,6 +17,7 @@ from app.services.documents import (
     DocumentEmbeddingError,
     DocumentEmptyError,
     DocumentNotFoundError,
+    DocumentNotFailedError,
     DocumentParseError,
     DocumentTitleError,
     _process_document_index,
@@ -25,6 +26,7 @@ from app.services.documents import (
     list_documents,
     process_document_index,
     recover_stale_processing_documents,
+    requeue_document_index,
     update_document,
     upload_document,
 )
@@ -733,6 +735,64 @@ class TestProcessDocumentIndex:
         # 不外抛即视为通过；已删除的小说不被打上 failed 标记
         assert doc.status != "failed"
         mock_cleanup.assert_called_once_with(5)
+
+
+class TestRequeueDocumentIndex:
+    """#65：重试索引——failed 重置 pending，非 failed 拒绝，残留向量清理。"""
+
+    @pytest.mark.asyncio
+    async def test_failed_document_resets_to_pending_and_clears_residue(self):
+        doc = _make_doc(
+            status="failed",
+            progress=25,
+            error_message="milvus down",
+            chunk_count=3,
+        )
+        db = _FakeAsyncSession(scalar_value=0, rows=[doc])
+
+        with patch.object(
+            document_service, "_delete_vectors_quietly"
+        ) as mock_cleanup:
+            result = await requeue_document_index(db, document_id=5)
+
+        assert result is doc
+        assert doc.status == "pending"
+        assert doc.progress == 0
+        assert doc.error_message is None
+        assert doc.chunk_count == 0
+        # 重试前清理失败残留（半写入的向量条目），避免重复数据。
+        mock_cleanup.assert_called_once_with(5)
+        assert db.commits >= 1
+
+    @pytest.mark.asyncio
+    async def test_missing_document_raises_not_found(self):
+        db = _FakeAsyncSession(scalar_value=0, missing=True)
+
+        with patch.object(
+            document_service, "_delete_vectors_quietly"
+        ) as mock_cleanup:
+            with pytest.raises(DocumentNotFoundError):
+                await requeue_document_index(db, document_id=99)
+
+        mock_cleanup.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["pending", "processing", "ready"])
+    async def test_non_failed_status_raises_without_reset(self, status):
+        doc = _make_doc(status=status, progress=50)
+        db = _FakeAsyncSession(scalar_value=0, rows=[doc])
+
+        with patch.object(
+            document_service, "_delete_vectors_quietly"
+        ) as mock_cleanup:
+            with pytest.raises(DocumentNotFailedError):
+                await requeue_document_index(db, document_id=5)
+
+        # 拒绝时不做任何改动：状态/进度不变、不清理向量、不提交。
+        assert doc.status == status
+        assert doc.progress == 50
+        mock_cleanup.assert_not_called()
+        assert db.commits == 0
 
 
 class _FakeSessionMaker:

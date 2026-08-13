@@ -54,6 +54,7 @@ function NovelList({ onEdit }: { onEdit: (doc: Document) => void }) {
   const [totalPages, setTotalPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [reindexingId, setReindexingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fetchDocuments = useCallback(async (page: number) => {
@@ -109,6 +110,20 @@ function NovelList({ onEdit }: { onEdit: (doc: Document) => void }) {
     fetchDocuments(page);
   };
 
+  // #65：重试索引——failed 重置 pending 后重新入队，列表轮询自动跟进。
+  const handleReindex = async (id: number) => {
+    setReindexingId(id);
+    try {
+      await documentApi.reindex(id);
+      fetchDocuments(currentPage);
+    } catch (err) {
+      setError('重新索引失败');
+      console.error('Reindex failed:', err);
+    } finally {
+      setReindexingId(null);
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg shadow">
       {error && (
@@ -151,6 +166,17 @@ function NovelList({ onEdit }: { onEdit: (doc: Document) => void }) {
                 )}
               </div>
               <div className="doc-item-actions">
+                {/* #65：仅 failed 行提供重新索引；其余状态不可重试。 */}
+                {doc.status === 'failed' && (
+                  <button
+                    className="pagination-btn"
+                    data-testid="novel-reindex-btn"
+                    disabled={reindexingId === doc.id}
+                    onClick={() => handleReindex(doc.id)}
+                  >
+                    {reindexingId === doc.id ? '重新索引中...' : '重新索引'}
+                  </button>
+                )}
                 <button
                   className="pagination-btn"
                   data-testid="novel-edit-btn"

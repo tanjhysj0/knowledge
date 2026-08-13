@@ -19,6 +19,8 @@ EXPECTED_METHODS = {
     "/api/documents": {"GET"},
     # #53/#54：单文档 PATCH 编辑与 GET 详情（编辑页按 id 拉取预填数据）
     "/api/documents/{document_id}": {"DELETE", "GET", "PATCH"},
+    # #65：重试索引——failed 小说重置 pending 并重新入队
+    "/api/documents/{document_id}/reindex": {"POST"},
     # #47：封面静态资源端点
     "/api/covers/{filename}": {"GET"},
     "/api/chat": {"POST"},

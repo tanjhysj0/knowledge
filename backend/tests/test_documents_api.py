@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from app.api import documents as documents_api
 from app.services import documents as document_service
+from app.services.documents import DocumentNotFoundError, DocumentNotFailedError
 
 
 def _fake_background_tasks():
@@ -175,3 +176,65 @@ class TestListRouteStatusFilter:
 
         kwargs = mock_list.await_args.kwargs
         assert kwargs["all_statuses"] is True
+
+
+class TestReindexRoute:
+    """#65：重试索引——failed 重置 pending 并重新入队，非 failed 拒绝。"""
+
+    @pytest.mark.asyncio
+    async def test_reindex_enqueues_index_task_and_returns_document(self):
+        background_tasks = _fake_background_tasks()
+
+        with patch.object(
+            document_service,
+            "requeue_document_index",
+            new=AsyncMock(return_value=_uploaded_document(42)),
+        ):
+            result = await documents_api.reindex_document(
+                document_id=42, db=object(), background_tasks=background_tasks
+            )
+
+        background_tasks.add_task.assert_called_once_with(
+            document_service.process_document_index, 42
+        )
+        assert result.id == 42
+
+    @pytest.mark.asyncio
+    async def test_reindex_missing_document_returns_404(self):
+        with patch.object(
+            document_service,
+            "requeue_document_index",
+            new=AsyncMock(side_effect=DocumentNotFoundError("Document not found")),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await documents_api.reindex_document(
+                    document_id=99,
+                    db=object(),
+                    background_tasks=_fake_background_tasks(),
+                )
+
+        assert exc.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_reindex_non_failed_document_returns_409(self):
+        background_tasks = _fake_background_tasks()
+
+        with patch.object(
+            document_service,
+            "requeue_document_index",
+            new=AsyncMock(
+                side_effect=DocumentNotFailedError(
+                    "Document is ready, only failed documents can be re-indexed"
+                )
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await documents_api.reindex_document(
+                    document_id=42,
+                    db=object(),
+                    background_tasks=background_tasks,
+                )
+
+        assert exc.value.status_code == 409
+        # 被拒绝时不得入队索引任务。
+        background_tasks.add_task.assert_not_called()

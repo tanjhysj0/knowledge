@@ -107,6 +107,12 @@ export const documentApi = {
     });
     return response.data;
   },
+
+  // #65：重试索引——failed 小说重置 pending 并重新入队后台处理。
+  reindex: async (id: number): Promise<Document> => {
+    const response = await api.post<Document>(`/documents/${id}/reindex`);
+    return response.data;
+  },
 };
 
 export const chatApi = {

@@ -34,6 +34,10 @@ class DocumentNotFoundError(DocumentServiceError):
     """请求的文档不存在。"""
 
 
+class DocumentNotFailedError(DocumentServiceError):
+    """重试索引目标不是 failed 状态（#65）。"""
+
+
 class DocumentParseError(DocumentServiceError):
     """文档解析失败。"""
 
@@ -327,6 +331,36 @@ async def process_document_index(document_id: int) -> None:
             await _process_document_index(db, document_id)
     except Exception as exc:  # noqa: BLE001 — 后台任务兜底
         logger.exception("document %s background indexing failed: %s", document_id, exc)
+
+
+async def requeue_document_index(
+    db: AsyncSession, document_id: int
+) -> Document:
+    """重试索引（#65）：failed 小说重置为 pending，由调用方重新入队。
+
+    仅 ``failed`` 状态可重试，其余状态抛 :class:`DocumentNotFailedError`；
+    重置前尽力清理失败残留的向量（如写入中途的半成品条目），并清空
+    error_message 与 chunk_count，与首次上传共用同一后台处理链路。
+    """
+    document = await _load_document(db, document_id)
+    if document is None:
+        raise DocumentNotFoundError("Document not found")
+    if document.status != "failed":
+        raise DocumentNotFailedError(
+            f"Document is {document.status}, only failed documents can be re-indexed"
+        )
+
+    # 重试前清除失败残留：半写入的向量条目一并清理，避免重复数据（#65）。
+    _delete_vectors_quietly(document_id)
+
+    document.status = "pending"
+    document.progress = 0
+    document.error_message = None
+    document.chunk_count = 0
+    await db.commit()
+    await db.refresh(document)
+
+    return document
 
 
 async def recover_stale_processing_documents(db: AsyncSession) -> List[int]:

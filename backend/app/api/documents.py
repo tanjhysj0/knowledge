@@ -20,6 +20,7 @@ from app.services.documents import (
     CoverTooLargeError,
     CoverTypeError,
     DocumentNotFoundError,
+    DocumentNotFailedError,
     DocumentTitleError,
 )
 from app.services import documents as document_service
@@ -175,3 +176,28 @@ async def delete_document(
     except DocumentNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"message": "Document deleted"}
+
+
+@router.post("/{document_id}/reindex", response_model=DocumentResponse)
+async def reindex_document(
+    document_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """重试索引（#65）：failed 小说重置 pending 并重新入队后台处理。
+
+    仅 failed 可重试（其余状态 409）；成功后经 BackgroundTasks 入队与
+    首次上传相同的处理链路，进度照常写回小说表。
+    """
+    try:
+        document = await document_service.requeue_document_index(
+            db=db, document_id=document_id
+        )
+    except DocumentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DocumentNotFailedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    # #65：与首次上传共用同一后台处理链路。
+    background_tasks.add_task(document_service.process_document_index, document.id)
+    return document
