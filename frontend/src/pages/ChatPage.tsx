@@ -29,6 +29,8 @@ interface ChatMessage {
   thinking?: string;
   /** RAG 检索命中的文档来源列表（#33），如 ``["doc_1", "doc_3"]``。空数组 / undefined = 未命中。 */
   sources?: string[];
+  /** 发送该消息时选中的文档（后端逗号分隔字符串）；仅 user 消息用于恢复会话文档上下文。 */
+  documentIds?: string | null;
 }
 
 /** 把 ``doc_<id>`` 解析为 ``<id>`` 整数（无效 token 返回 null）。 */
@@ -36,13 +38,6 @@ function parseDocId(token: string): number | null {
   if (!token.startsWith('doc_')) return null;
   const id = Number(token.slice(4));
   return Number.isInteger(id) && id > 0 ? id : null;
-}
-
-/** 从首条用户消息截取前 20 字作为会话标题摘要。 */
-function summarizeTitle(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= 20) return trimmed;
-  return trimmed.slice(0, 20) + '…';
 }
 
 /** #51：把 ``doc`` 路由参数解析为合法小说 id（无参 / 非法返回 null）。 */
@@ -53,22 +48,20 @@ function parseFocusedDocId(param: string | null): number | null {
 }
 
 export default function ChatPage() {
-  // #51：路由聚焦单小说（/chat?doc=<id>）。null = 无参访问，保持默认全选。
+  // #51：路由聚焦单小说（/chat?doc=<id>）。null = 无参访问，激活会话列表首条。
   const [searchParams] = useSearchParams();
   const focusedDocId = parseFocusedDocId(searchParams.get('doc'));
-  // StrictMode 下挂载 effect 会执行两次：聚焦/自动建会话路径各用 ref 防止
+  // StrictMode 下挂载 effect 会执行两次：聚焦建会话路径用 ref 防止
   // 重复创建（两次 list 都在首条 create 落地前发出，都会看到空列表）。
   const focusedConvCreatedRef = useRef(false);
-  const autoConvCreatedRef = useRef(false);
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
-  const [selectorOpen, setSelectorOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [thinkingOpen, setThinkingOpen] = useState<Record<number, boolean>>({});
-  // 会话（#35）：左侧栏列表 + 当前激活 id；首次加载为空数组时自动建一个。
+  // 会话（#35）：左侧栏列表 + 当前激活 id。会话只能由首页小说卡片进入
+  // 时创建（#52 绑定小说），无会话时不自动创建。
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
   // 防止快速连续点击同一会话的删除 / 切换按钮。
@@ -108,18 +101,6 @@ export default function ChatPage() {
     documentApi.list(1, 100)
       .then((res) => {
         setDocuments(res.items);
-        if (focusedDocId !== null) {
-          // #51 路由聚焦：文档上下文只选中这本小说（不再默认全选）。
-          const exists = res.items.some((d) => d.id === focusedDocId);
-          setSelectedIds(exists ? new Set([focusedDocId]) : new Set());
-        } else {
-          // 默认全选新加载的文档
-          setSelectedIds((prev) => {
-            const next = new Set(prev);
-            for (const d of res.items) next.add(d.id);
-            return next;
-          });
-        }
       })
       .catch((err) => {
         console.error('加载文档列表失败:', err);
@@ -151,15 +132,7 @@ export default function ChatPage() {
             setError('新建会话失败，请稍后重试');
             console.error('聚焦新建会话失败:', err);
           }
-        } else if (list.length === 0) {
-          // 首次进入若无会话则自动建一个，激活到该 id 并空消息列表。
-          if (autoConvCreatedRef.current) return;
-          autoConvCreatedRef.current = true;
-          const created = await conversationApi.create({});
-          setConversations([created]);
-          setActiveConvId(created.id);
-          setMessages([]);
-        } else {
+        } else if (list.length > 0) {
           setConversations(list);
           setActiveConvId(list[0].id);
         }
@@ -226,48 +199,11 @@ export default function ChatPage() {
     }
   }, [input]);
 
-  const toggleDocument = (id: number) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleSelectAll = () => {
-    setSelectedIds((prev) => {
-      if (prev.size === documents.length) {
-        return new Set();
-      }
-      return new Set(documents.map((d) => d.id));
-    });
-  };
-
   /** 终止当前正在进行的 SSE 流（#35 切换会话时使用）。 */
   const abortCurrentStream = () => {
     if (abortRef.current) {
       abortRef.current.abort();
       abortRef.current = null;
-    }
-  };
-
-  /** 新建一个会话：建好后激活、消息清空。 */
-  const handleNewConversation = async () => {
-    if (sidebarBusy) return;
-    setSidebarBusy(true);
-    try {
-      const created = await conversationApi.create({});
-      setConversations((prev) => [created, ...prev]);
-      setActiveConvId(created.id);
-      setMessages([]);
-      setThinkingOpen({});
-      setError(null);
-    } catch (err) {
-      console.error('新建会话失败:', err);
-      setError('新建会话失败，请稍后重试');
-    } finally {
-      setSidebarBusy(false);
     }
   };
 
@@ -281,14 +217,8 @@ export default function ChatPage() {
       const remaining = conversations.filter((c) => c.id !== id);
       setConversations(remaining);
       if (activeConvId === id) {
-        if (remaining.length === 0) {
-          // 删完后空了，再建一条
-          const created = await conversationApi.create({});
-          setConversations([created]);
-          setActiveConvId(created.id);
-        } else {
-          setActiveConvId(remaining[0].id);
-        }
+        // 删完后空了不再自动建会话（会话只能从首页小说卡片创建）
+        setActiveConvId(remaining.length > 0 ? remaining[0].id : null);
         setMessages([]);
         setThinkingOpen({});
       }
@@ -323,27 +253,11 @@ export default function ChatPage() {
     setError(null);
     setIsLoading(true);
 
-    const documentIds = Array.from(selectedIds);
     const convIdAtSend = activeConvId;
-
-    // 首条用户消息发送成功后，把会话标题改成消息前 20 字摘要（#35）。
-    // 仅在标题仍是默认「新对话」时改写；已命名的会话（#51 小说名）不覆盖，
-    // 且改成摘要后不再重复触发。
+    // 会话上下文有且只有其绑定的一本小说（#52）；未绑定（存量会话）不携带文档。
     const currentConv = conversations.find((c) => c.id === convIdAtSend);
-    const isFirstMessage =
-      currentConv &&
-      currentConv.message_count === 0 &&
-      currentConv.title === '新对话';
-    if (isFirstMessage) {
-      const newTitle = summarizeTitle(sentText);
-      // 乐观更新本地标题（失败不回滚，便于用户继续对话）
-      setConversations((prev) =>
-        prev.map((c) => (c.id === convIdAtSend ? { ...c, title: newTitle } : c))
-      );
-      conversationApi
-        .update(convIdAtSend, { title: newTitle })
-        .catch((err) => console.error('更新会话标题失败:', err));
-    }
+    const documentIds =
+      currentConv?.document_id != null ? [currentConv.document_id] : [];
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -512,15 +426,13 @@ export default function ChatPage() {
     }
   };
 
-  const selectedCount = selectedIds.size;
-  const totalCount = documents.length;
-  // 三态文案：有小说未选 / 全选 / 部分选；无小说时不渲染（#49 文案统一）
-  const contextLabel = (() => {
-    if (totalCount === 0) return null;
-    if (selectedCount === 0) return '未选择小说，将基于通用知识回答';
-    if (selectedCount === totalCount) return `基于全部 ${totalCount} 本小说回答`;
-    return `基于 ${selectedCount} / ${totalCount} 本小说回答`;
-  })();
+  const activeConv = conversations.find((c) => c.id === activeConvId) ?? null;
+  // 上下文 = 当前会话绑定的小说（有且只有一本）；未绑定时不显示提示。
+  const boundDoc =
+    activeConv?.document_id != null
+      ? documents.find((d) => d.id === activeConv.document_id) ?? null
+      : null;
+  const contextLabel = boundDoc ? `基于《${getDisplayTitle(boundDoc)}》回答` : null;
 
   return (
     <div className="chat-layout">
@@ -528,15 +440,6 @@ export default function ChatPage() {
       <aside className="conversation-sidebar" data-testid="conversation-sidebar">
         <div className="conversation-sidebar-header">
           <span className="conversation-sidebar-title">会话</span>
-          <button
-            type="button"
-            className="conversation-new-btn"
-            data-testid="conversation-new"
-            onClick={handleNewConversation}
-            disabled={sidebarBusy}
-          >
-            ＋ 新建
-          </button>
         </div>
         <ul className="conversation-list" data-testid="conversation-list">
           {conversations.length === 0 && (
@@ -599,8 +502,20 @@ export default function ChatPage() {
         <div className="messages">
           {messages.length === 0 && (
             <div className="empty-state">
-              <p>开始对话吧！</p>
-              <small>上传小说后可基于小说内容回答问题</small>
+              {activeConvId === null ? (
+                <>
+                  <p>还没有会话</p>
+                  <small>从首页选择一本小说开始讨论，会话将自动创建并绑定该小说</small>
+                  <Link to="/" className="empty-state-link" data-testid="empty-shelf-link">
+                    去书架选小说
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <p>开始对话吧！</p>
+                  <small>基于这本小说提问，AI 会结合原文内容回答</small>
+                </>
+              )}
             </div>
           )}
 
@@ -704,55 +619,8 @@ export default function ChatPage() {
 
         <div className="input-area">
           {contextLabel && (
-            <div
-              className={`context-indicator ${selectedCount === 0 ? 'context-empty' : ''}`}
-              data-testid="context-indicator"
-            >
+            <div className="context-indicator" data-testid="context-indicator">
               <span className="context-label">{contextLabel}</span>
-              {totalCount > 0 && (
-                <button
-                  type="button"
-                  className="context-toggle"
-                  data-testid="context-toggle"
-                  onClick={() => setSelectorOpen((v) => !v)}
-                  aria-expanded={selectorOpen}
-                >
-                  {selectorOpen ? '收起' : '选择小说'}
-                </button>
-              )}
-            </div>
-          )}
-
-          {selectorOpen && totalCount > 0 && (
-            <div className="document-selector" data-testid="document-selector">
-              <div className="document-selector-header">
-                <span>小说选择</span>
-                <button
-                  type="button"
-                  className="document-selector-all"
-                  data-testid="document-selector-all"
-                  onClick={toggleSelectAll}
-                >
-                  {selectedCount === totalCount ? '全部取消' : '全部选择'}
-                </button>
-              </div>
-              <ul className="document-selector-list">
-                {documents.map((doc) => (
-                  <li key={doc.id} className="document-selector-item">
-                    <label>
-                      <input
-                        type="checkbox"
-                        data-testid={`document-checkbox-${doc.id}`}
-                        checked={selectedIds.has(doc.id)}
-                        onChange={() => toggleDocument(doc.id)}
-                      />
-                      <span className="document-selector-name" title={doc.filename}>
-                        {doc.filename}
-                      </span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
             </div>
           )}
 
@@ -762,11 +630,18 @@ export default function ChatPage() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="输入问题... (Enter 发送，Shift+Enter 换行)"
+              placeholder={
+                activeConvId === null
+                  ? '从首页选择一本小说开始讨论'
+                  : '输入问题... (Enter 发送，Shift+Enter 换行)'
+              }
               rows={1}
-              disabled={isLoading}
+              disabled={isLoading || activeConvId === null}
             />
-            <button onClick={handleSend} disabled={isLoading || !input.trim()}>
+            <button
+              onClick={handleSend}
+              disabled={isLoading || !input.trim() || activeConvId === null}
+            >
               {isLoading ? '发送中...' : '发送'}
             </button>
           </div>

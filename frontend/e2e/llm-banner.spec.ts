@@ -11,16 +11,28 @@
  */
 import { test, expect } from '@playwright/test';
 
+// 固定 client key：浏览器侧会话空间与 API 直建会话保持一致。
+const CLIENT_KEY = 'e2e-llm-banner-client';
+
 test.describe('Chat Page - LLM 异常 Banner (Issue #45)', () => {
   test.describe.configure({ mode: 'serial' });
 
   test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await page.evaluate(
+      (key) => localStorage.setItem('docqa_client_id', key),
+      CLIENT_KEY
+    );
+    // 直建一条该 client 的空会话：历史会话的残留消息会干扰下方
+    // .message 计数断言。不做全量 DELETE——并行模式下会删除其他 spec
+    // 正在使用的会话（曾导致 api.spec 的 chat 契约 FK violation）。
+    const createRes = await page.request.post('/api/conversations', {
+      headers: { 'X-Client-Id': CLIENT_KEY },
+      data: {},
+    });
+    expect(createRes.ok()).toBeTruthy();
     await page.goto('/chat');
     await page.waitForSelector('textarea');
-    // 新建一个空会话：历史会话的残留消息会干扰下方 .message 计数断言。
-    // 不做全量 DELETE——并行模式下会删除其他 spec 正在使用的会话（曾导致
-    // api.spec 的 chat 契约 FK violation）。
-    await page.locator('[data-testid="conversation-new"]').click();
     await expect(
       page.locator('[data-testid^="conversation-item-"][data-active="true"]')
     ).toHaveCount(1, { timeout: 5_000 });

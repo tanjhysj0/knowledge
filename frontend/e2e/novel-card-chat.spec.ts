@@ -4,10 +4,10 @@ import { test as cleanupTest, BACKEND_BASE } from './helpers/cleanup';
 /**
  * Issue #51: 点击小说卡片开始讨论。
  *
- * 完整链路：首页点卡片 → /chat?doc=<id> 聚焦单小说（文档上下文只选中
- * 该小说，不再默认全选）→ 自动新建并激活会话、标题默认取小说名 →
- * 发送消息请求体 document_ids 仅含该小说 id；聊天页左上角 DocQA Logo
- * 点击返回首页书架；无 doc 参数直接访问 /chat 保持默认全选。
+ * 完整链路：首页点卡片 → /chat?doc=<id> 聚焦该小说（文档上下文 = 会话
+ * 绑定的这本小说，有且只有一本）→ 自动新建并激活会话、标题默认取小说名
+ * → 发送消息请求体 document_ids 仅含该小说 id；聊天页左上角 DocQA Logo
+ * 点击返回首页书架；无 doc 参数直接访问 /chat 无会话时显示引导空态。
  *
  * 测试数据通过后端 API 上传/删除（同 homepage-novel.spec），聊天请求
  * 由 playwright.config 注入的 X-E2E-Test 头部切到 MockLLMProvider。
@@ -100,23 +100,12 @@ cleanupTest.describe('点击小说卡片开始讨论 - E2E (#51)', () => {
       });
       await page.waitForSelector('textarea');
 
-      // 聊天页只选中该小说：context-indicator 显示单小说文案
-      // （仅 1 本时「基于全部 1 本小说回答」；多本时「基于 1 / N 本小说回答」）
+      // 聊天页文档上下文 = 会话绑定的这本小说：context-indicator 显示书名
       const indicator = page.locator('[data-testid="context-indicator"]');
       await expect(indicator).toBeVisible({ timeout: 5_000 });
       await expect(indicator.locator('.context-label')).toHaveText(
-        /^基于 (全部 1|1 \/ \d+) 本小说回答$/
+        `基于《${title}》回答`
       );
-
-      // 选择器中只有该小说勾选
-      await page.locator('[data-testid="context-toggle"]').click();
-      await expect(
-        page.locator(`[data-testid="document-checkbox-${docId}"]`)
-      ).toBeChecked();
-      const checkedCount = await page
-        .locator('[data-testid^="document-checkbox-"]:checked')
-        .count();
-      expect(checkedCount).toBe(1);
 
       // 自动新建并激活的会话标题默认取小说名
       const activeItem = page.locator(
@@ -170,25 +159,20 @@ cleanupTest.describe('点击小说卡片开始讨论 - E2E (#51)', () => {
     ).toBeVisible({ timeout: 10_000 });
   });
 
-  cleanupTest('无 doc 参数直接访问 /chat 保持默认全选', async ({ page, uploadedDocs }) => {
+  cleanupTest('无 doc 参数直接访问 /chat：无会话不自动创建，显示引导空态', async ({ page, uploadedDocs }) => {
     const filename = `direct-chat-${Date.now()}.txt`;
     await uploadViaApi(filename, `novel body for ${filename}`);
-    const docId = await waitDocId(filename);
     await uploadedDocs.track(filename);
 
+    // 新浏览器上下文没有任何会话：不自动创建，展示引导空态
     await page.goto('/chat');
     await page.waitForSelector('textarea');
+    await expect(page.locator('.empty-state')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('.empty-state')).toContainText('还没有会话');
+    await expect(page.locator('[data-testid="empty-shelf-link"]')).toBeVisible();
 
-    // 默认全选：文案为「基于全部 N 本小说回答」
-    const indicator = page.locator('[data-testid="context-indicator"]');
-    await expect(indicator).toBeVisible({ timeout: 5_000 });
-    await expect(indicator.locator('.context-label')).toHaveText(
-      /^基于全部 \d+ 本小说回答$/
-    );
-
-    await page.locator('[data-testid="context-toggle"]').click();
-    await expect(
-      page.locator(`[data-testid="document-checkbox-${docId}"]`)
-    ).toBeChecked();
+    // 输入区禁用，需从首页选小说进入
+    await expect(page.locator('textarea')).toBeDisabled();
+    await expect(page.locator('button:has-text("发送")')).toBeDisabled();
   });
 });

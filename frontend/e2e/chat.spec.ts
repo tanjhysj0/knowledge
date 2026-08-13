@@ -1,5 +1,8 @@
 import { test, expect } from '@playwright/test';
 
+// 固定 client key：浏览器侧会话空间与 API 直建会话保持一致。
+const CLIENT_KEY = 'e2e-chat-client';
+
 test.describe('Chat Page - E2E', () => {
   // 后端通过 X-E2E-Test Header 自动返回 MockLLMProvider；前端不再额外拦截。
   // 其他接口（history/documents/settings）继续走真实后端。
@@ -9,24 +12,30 @@ test.describe('Chat Page - E2E', () => {
   test.describe.configure({ mode: 'serial' });
 
   test.beforeEach(async ({ page }) => {
+    // 固定 client key：无会话时经 API 直建一条通用会话，保证进入 /chat
+    // 后 activeConvId 有效（会话不再自动创建，仅由首页卡片创建）。
+    await page.goto('/');
+    await page.evaluate(
+      (key) => localStorage.setItem('docqa_client_id', key),
+      CLIENT_KEY
+    );
+    const res = await page.request.get('/api/conversations', {
+      headers: { 'X-Client-Id': CLIENT_KEY },
+    });
+    if (res.ok()) {
+      const list: Array<{ id: number }> = await res.json();
+      if (list.length === 0) {
+        await page.request.post('/api/conversations', {
+          headers: { 'X-Client-Id': CLIENT_KEY },
+          data: {},
+        });
+      }
+    }
     // 导航到聊天页
     await page.goto('/chat');
     await page.waitForLoadState('networkidle').catch(() => {});
     // 等待聊天页输入框渲染
     await page.waitForSelector('textarea');
-    // #36：跨文件并行（conversation-isolation / conversation-sidebar）会
-    // 通过 API 删/建会话干扰 React state。若列表为空 reload，让 ChatPage
-    // useEffect 自动建一个新会话，保证 activeConvId 一定有效。不主动
-    // DELETE 所有会话以避免 beforeEach 超时（7个测试串行下 5s 不得）
-    const res = await page.request.get('/api/conversations');
-    if (res.ok()) {
-      const list: Array<{ id: number }> = await res.json();
-      if (list.length === 0) {
-        await page.reload();
-        await page.waitForSelector('textarea');
-        await page.waitForLoadState('networkidle').catch(() => {});
-      }
-    }
     // 保证进入首个发送前 React state 已有 active conv：
     await expect(
       page.locator('[data-testid^="conversation-item-"][data-active="true"]')
@@ -167,15 +176,11 @@ test.describe('Chat Page - E2E', () => {
     ).toHaveCount(1);
   });
 
-  test('未上传文档时不应显示 context-indicator', async ({ page }) => {
-    // 通过 API 确认 chat 测试隔离：保证本例启动时无文档
+  test('未绑定小说的会话不显示 context-indicator', async ({ page }) => {
+    // 本 spec 的会话均为 API 直建的通用会话（未绑定小说），
+    // 文档上下文提示不应渲染。
     const contextIndicator = page.locator('[data-testid="context-indicator"]');
-    const hasIndicator = await contextIndicator.isVisible().catch(() => false);
-    if (!hasIndicator) {
-      await expect(contextIndicator).not.toBeVisible();
-    } else {
-      console.warn('[chat.spec] 检测到遗留文档，context-indicator 可见，跳过本例');
-    }
+    await expect(contextIndicator).toHaveCount(0);
   });
 
   test('应支持 Enter 键发送消息', async ({ page }) => {
