@@ -1,16 +1,14 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  chatApi,
   documentApi,
   llmStatusApi,
-  LLMUnavailableError,
 } from '../services/api';
 import type { Document } from '../types';
-import { SSEParser } from '../utils/sseParser';
 import { getDisplayTitle } from '../utils/format';
-import { parseDocId, parseSources } from '../utils/chat';
+import { parseDocId } from '../utils/chat';
 import { useConversations } from '../hooks/useConversations';
+import { useChatStream } from '../hooks/useChatStream';
 import ConversationSidebar from '../components/ConversationSidebar';
 import '../App.css';
 
@@ -32,7 +30,6 @@ export default function ChatPage() {
   const [searchParams] = useSearchParams();
   const focusedDocId = parseFocusedDocId(searchParams.get('doc'));
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 切换会话时取消 in-flight SSE 流（会话 hook 与发送流程共用）。
@@ -55,6 +52,27 @@ export default function ChatPage() {
     handleSwitchConversation,
     handleToggleThinking,
   } = useConversations({ focusedDocId, abortRef, setIsLoading, setError });
+
+  // #60：流式发送流程收敛到 hook；showLLMBanner 以回调注入——
+  // #61 由 useLLMBanner 提供实现，当前由页面内联过渡实现。
+  const showLLMBanner = useCallback(
+    (message: string, showSettingsLink: boolean) => {
+      setLlmBanner({ message, showSettingsLink });
+      setLlmBannerDismissed(false);
+    },
+    []
+  );
+
+  const { input, setInput, send } = useChatStream({
+    activeConvId,
+    conversations,
+    abortRef,
+    setMessages,
+    isLoading,
+    setIsLoading,
+    setError,
+    showLLMBanner,
+  });
 
   // #45：进入聊天页时拉取 LLM 可用性；未配置立刻显示红字 banner（带"去设置"链接）。
   useEffect(() => {
@@ -105,157 +123,10 @@ export default function ChatPage() {
     }
   }, [input]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
-    if (activeConvId === null) return;
-
-    const userMessage = { id: Date.now(), role: 'user', content: input };
-    setMessages((prev) => [...prev, userMessage]);
-    const sentText = input;
-    setInput('');
-    setError(null);
-    setIsLoading(true);
-
-    const convIdAtSend = activeConvId;
-    // 会话上下文有且只有其绑定的一本小说（#52）；未绑定（存量会话）不携带文档。
-    const currentConv = conversations.find((c) => c.id === convIdAtSend);
-    const documentIds =
-      currentConv?.document_id != null ? [currentConv.document_id] : [];
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-    // #45 catch 块需要能清掉本轮助手占位消息，所以提到 try 块外。
-    let assistantId: number | null = null;
-
-    try {
-      // #58：流式请求统一走服务层；503 在服务层解析为 LLMUnavailableError。
-      const response = await chatApi.stream(
-        {
-          message: sentText,
-          document_ids: documentIds,
-          conversation_id: convIdAtSend,
-        },
-        controller.signal
-      );
-
-      if (!response.ok) {
-        throw new Error('请求失败');
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('无法读取响应');
-
-      const decoder = new TextDecoder();
-      const parser = new SSEParser();
-      // #45 赋值给外层 let，catch 块才能清掉本轮助手占位（不可用 const 重声明）。
-      const newAssistantId = Date.now() + 1;
-      assistantId = newAssistantId;
-      setMessages((prev) => [...prev, { id: newAssistantId, role: 'assistant', content: '', sources: [] }]);
-      // 累积本轮的 sources（SSE done 事件一次性下发），用 ref 避免闭包陈旧
-      const sourcesRef: { current: string[] } = { current: [] };
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const text = decoder.decode(value, { stream: true });
-        const events = parser.feed(text);
-        // #45 先在 setMessages 回调外捕获 error 事件，throw 才能跳到外层 catch。
-        const errorEvent = events.find((e) => e.event === 'error');
-        if (errorEvent) {
-          const errPayload = errorEvent.data as
-            | { reason?: string; error?: string; content?: string }
-            | null;
-          const reason =
-            errPayload?.reason ||
-            errPayload?.error ||
-            errPayload?.content?.toString() ||
-            '模型返回错误';
-          throw new LLMUnavailableError(reason, false);
-        }
-        if (events.length > 0) {
-          setMessages((prev) =>
-            prev.map((m) => {
-              if (m.id !== assistantId) return m;
-              let { content, thinking } = m;
-              for (const ev of events) {
-                const payload = ev.data as
-                  | { content?: string; sources?: string[] }
-                  | null;
-                if (ev.event === 'thinking' || ev.event === 'message') {
-                  const piece = payload?.content;
-                  if (typeof piece !== 'string' || piece.length === 0) continue;
-                  if (ev.event === 'thinking') {
-                    thinking = (thinking || '') + piece;
-                  } else {
-                    content += piece;
-                  }
-                } else if (ev.event === 'done') {
-                  // done 事件携带 sources（#33）；保留后端顺序（#56 收敛到 parseSources）
-                  const incoming = parseSources(payload);
-                  if (incoming.length > 0) {
-                    sourcesRef.current = incoming;
-                  }
-                }
-              }
-              return { ...m, content, thinking, sources: sourcesRef.current };
-            })
-          );
-        }
-      }
-
-      for (const ev of parser.end()) {
-        const payload = ev.data as
-          | { content?: string; sources?: string[] }
-          | null;
-        if (ev.event === 'thinking' || ev.event === 'message') {
-          const piece = payload?.content;
-          if (typeof piece !== 'string' || piece.length === 0) continue;
-          setMessages((prev) =>
-            prev.map((m) => {
-              if (m.id !== assistantId) return m;
-              if (ev.event === 'thinking') {
-                return { ...m, thinking: (m.thinking || '') + piece };
-              }
-              return { ...m, content: m.content + piece };
-            })
-          );
-        } else if (ev.event === 'done') {
-          const incoming = parseSources(payload);
-          if (incoming.length > 0) {
-            sourcesRef.current = incoming;
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId ? { ...m, sources: sourcesRef.current } : m
-              )
-            );
-          }
-        }
-      }
-    } catch (err: any) {
-      if (err?.name === 'AbortError') {
-        // 主动取消：忽略错误（典型场景：切换会话时）
-      } else if (err instanceof LLMUnavailableError) {
-        // #45 LLM 不可用：显示红字 banner 并清掉本轮的用户/助手占位消息。
-        setLlmBanner({ message: err.message, showSettingsLink: err.showSettingsLink });
-        setLlmBannerDismissed(false);
-        setMessages((prev) =>
-          prev.filter((m) => m.id !== userMessage.id && m.id !== assistantId)
-        );
-      } else {
-        setError(err.message || '发送消息失败');
-        // Remove the user message if the request failed
-        setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
-      }
-    } finally {
-      abortRef.current = null;
-      setIsLoading(false);
-    }
-  };
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      send();
     }
   };
 
@@ -433,7 +304,7 @@ export default function ChatPage() {
               disabled={isLoading || activeConvId === null}
             />
             <button
-              onClick={handleSend}
+              onClick={send}
               disabled={isLoading || !input.trim() || activeConvId === null}
             >
               {isLoading ? '发送中...' : '发送'}
