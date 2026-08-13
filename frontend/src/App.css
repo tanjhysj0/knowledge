@@ -940,7 +940,42 @@
   cursor: not-allowed;
 }
 
-/* #50：首页纯展示书架（卡片网格，无导航无管理能力） */
+/* #54：前台顶部导航条（仅含书籍列表 / 会话列表两个入口，当前路由高亮） */
+.top-nav {
+  background: #fff;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.top-nav-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+}
+
+.top-nav-item {
+  display: block;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #555;
+  text-decoration: none;
+}
+
+.top-nav-item:hover {
+  background: #f0f4f8;
+}
+
+.top-nav-item.active {
+  background: #e3f2fd;
+  color: #1976d2;
+  font-weight: 600;
+}
+
+/* #50：首页纯展示书架（卡片网格，无管理能力） */
 .shelf-page {
   padding: 24px;
   max-width: 1200px;

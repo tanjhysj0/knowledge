@@ -1,20 +1,63 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Layout + NovelListPage - E2E (#50)', () => {
-  test.describe('前台无导航', () => {
-    test('首页/问答/设置页均不再渲染顶部导航', async ({ page }) => {
-      // #50：顶部导航（首页/问答/设置链接）全站移除，前台不再渲染 nav
+test.describe('Layout + NovelListPage - E2E (#50/#54)', () => {
+  test.describe('前台顶部导航条（#54）', () => {
+    test('前台三页均渲染导航条，仅含书籍列表/会话列表两个入口', async ({ page }) => {
       for (const path of ['/', '/chat', '/settings']) {
         await page.goto(path);
-        await expect(page.locator('nav')).toHaveCount(0);
+
+        const nav = page.locator('nav.top-nav');
+        await expect(nav).toBeVisible();
+        await expect(nav.locator('a')).toHaveCount(2);
+        await expect(nav.locator('[data-testid="nav-books"]')).toHaveText('书籍列表');
+        await expect(nav.locator('[data-testid="nav-chats"]')).toHaveText('会话列表');
       }
     });
 
+    test('当前路由高亮对应导航项（/ 书籍列表，/chat 会话列表）', async ({ page }) => {
+      await page.goto('/');
+      await expect(page.locator('[data-testid="nav-books"]')).toHaveClass(/active/);
+      await expect(page.locator('[data-testid="nav-chats"]')).not.toHaveClass(/active/);
+
+      await page.goto('/chat');
+      await expect(page.locator('[data-testid="nav-chats"]')).toHaveClass(/active/);
+      await expect(page.locator('[data-testid="nav-books"]')).not.toHaveClass(/active/);
+
+      // /settings 不属于两个入口，无高亮项
+      await page.goto('/settings');
+      await expect(page.locator('[data-testid="nav-books"]')).not.toHaveClass(/active/);
+      await expect(page.locator('[data-testid="nav-chats"]')).not.toHaveClass(/active/);
+    });
+
+    test('书籍列表跳 /（书架可见）、会话列表跳 /chat（会话侧栏可见）', async ({ page }) => {
+      await page.goto('/settings');
+
+      await page.locator('[data-testid="nav-books"]').click();
+      await expect(page).toHaveURL(/\/$/, { timeout: 5_000 });
+      await expect(
+        page
+          .locator('[data-testid="shelf-grid"], [data-testid="shelf-empty"]')
+          .first()
+      ).toBeVisible({ timeout: 5_000 });
+
+      await page.locator('[data-testid="nav-chats"]').click();
+      await expect(page).toHaveURL(/\/chat$/, { timeout: 5_000 });
+      await expect(page.locator('[data-testid="conversation-sidebar"]')).toBeVisible();
+    });
+
+    test('/admin 不渲染前台导航条，管理端布局不变', async ({ page }) => {
+      await page.goto('/admin');
+
+      await expect(page.locator('nav.top-nav')).toHaveCount(0);
+      await expect(page.locator('.admin-sidebar')).toBeVisible();
+      await expect(page.locator('.admin-menu-item').first()).toBeVisible();
+    });
+
     test('未匹配路径下前台主区应仍渲染（SPA fallback）', async ({ page }) => {
-      // 未匹配路径仍应渲染前台主区（SPA fallback），且无导航
+      // 未匹配路径仍应渲染前台主区（SPA fallback），导航条随前台布局渲染
       await page.goto('/non-existent-route');
 
-      await expect(page.locator('nav')).toHaveCount(0);
+      await expect(page.locator('nav.top-nav')).toBeVisible();
       await expect(page.locator('main')).toBeVisible();
     });
   });
