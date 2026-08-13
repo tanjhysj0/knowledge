@@ -56,6 +56,12 @@ export const documentApi = {
     return response.data;
   },
 
+  // 单文档详情：管理端编辑页按 id 拉取预填数据（刷新可恢复）。
+  get: async (id: number): Promise<Document> => {
+    const response = await api.get<Document>(`/documents/${id}`);
+    return response.data;
+  },
+
   delete: async (id: number): Promise<void> => {
     await api.delete(`/documents/${id}`);
   },

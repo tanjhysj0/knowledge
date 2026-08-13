@@ -1,4 +1,4 @@
-import { test, expect, request as apiRequest } from '@playwright/test';
+import { expect, request as apiRequest } from '@playwright/test';
 import { test as cleanupTest, BACKEND_BASE } from './helpers/cleanup';
 
 /**
@@ -47,6 +47,22 @@ async function cleanupCrossPageDocs(): Promise<void> {
 }
 
 
+// 通过后端 API 上传文档（#50：首页已移除上传区，改用 API 上传测试数据）
+async function uploadDocumentViaApi(filename: string, content: string): Promise<void> {
+  const ctx = await apiRequest.newContext({ baseURL: BACKEND_BASE });
+  try {
+    const res = await ctx.post('/api/documents/upload', {
+      multipart: {
+        file: { name: filename, mimeType: 'text/markdown', buffer: Buffer.from(content) },
+      },
+    });
+    expect(res.ok()).toBeTruthy();
+  } finally {
+    await ctx.dispose();
+  }
+}
+
+
 async function goToChatAndWaitDocs(page: import('@playwright/test').Page): Promise<void> {
   const listPromise = page.waitForResponse(
     (res) =>
@@ -70,21 +86,10 @@ cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
     '上传含关键词 .md 后 ChatPage 应显示 context-indicator 并默认选中',
     async ({ page, uploadedDocs }) => {
       const filename = `cross-page-rag-${Date.now()}.md`;
-      await page.goto('/');
-      await page.waitForSelector('.upload-zone');
-
-      const fileInput = page.locator('[data-testid="novel-file-input"]');
-      await fileInput.setInputFiles({
-        name: filename,
-        mimeType: 'text/markdown',
-        buffer: Buffer.from(
-          `# 公司财务报告\n\n本年度${KEYWORD}，同比增长 15%。`
-        ),
-      });
-
-      await expect(
-        page.locator(`.doc-item-name:has-text("${filename}")`)
-      ).toBeVisible({ timeout: 5_000 });
+      await uploadDocumentViaApi(
+        filename,
+        `# 公司财务报告\n\n本年度${KEYWORD}，同比增长 15%。`
+      );
 
       let docId: number | undefined;
       for (let i = 0; i < 20; i++) {
@@ -126,16 +131,7 @@ cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
     '选中后提问 → 后端应收到包含文档 id 的请求并返回 mock 回复',
     async ({ page, uploadedDocs }) => {
       const filename = `cross-page-rag-qa-${Date.now()}.md`;
-      await page.goto('/');
-      await page.waitForSelector('.upload-zone');
-      await page.locator('[data-testid="novel-file-input"]').setInputFiles({
-        name: filename,
-        mimeType: 'text/markdown',
-        buffer: Buffer.from(`# 公司财务报告\n\n本年度${KEYWORD}。`),
-      });
-      await expect(
-        page.locator(`.doc-item-name:has-text("${filename}")`)
-      ).toBeVisible({ timeout: 5_000 });
+      await uploadDocumentViaApi(filename, `# 公司财务报告\n\n本年度${KEYWORD}。`);
       let docId: number | undefined;
       for (let i = 0; i < 20; i++) {
         const docs = await listDocuments();
@@ -178,16 +174,7 @@ cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
     '取消选中后提问 → 请求体不应携带任何文档 id',
     async ({ page, uploadedDocs }) => {
       const filename = `cross-page-rag-empty-${Date.now()}.md`;
-      await page.goto('/');
-      await page.waitForSelector('.upload-zone');
-      await page.locator('[data-testid="novel-file-input"]').setInputFiles({
-        name: filename,
-        mimeType: 'text/markdown',
-        buffer: Buffer.from(`# 报告\n\n本年度${KEYWORD}。`),
-      });
-      await expect(
-        page.locator(`.doc-item-name:has-text("${filename}")`)
-      ).toBeVisible({ timeout: 5_000 });
+      await uploadDocumentViaApi(filename, `# 报告\n\n本年度${KEYWORD}。`);
       await uploadedDocs.track(filename);
 
       await goToChatAndWaitDocs(page);
@@ -225,25 +212,8 @@ cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
     async ({ page, uploadedDocs }) => {
       const filenameA = `cross-page-rag-A-${Date.now()}.md`;
       const filenameB = `cross-page-rag-B-${Date.now()}.md`;
-      await page.goto('/');
-      await page.waitForSelector('.upload-zone');
-      const fileInput = page.locator('[data-testid="novel-file-input"]');
-      await fileInput.setInputFiles({
-        name: filenameA,
-        mimeType: 'text/markdown',
-        buffer: Buffer.from(`# Doc A\n\n${KEYWORD} from A`),
-      });
-      await expect(
-        page.locator(`.doc-item-name:has-text("${filenameA}")`)
-      ).toBeVisible({ timeout: 5_000 });
-      await fileInput.setInputFiles({
-        name: filenameB,
-        mimeType: 'text/markdown',
-        buffer: Buffer.from(`# Doc B\n\n${KEYWORD} from B`),
-      });
-      await expect(
-        page.locator(`.doc-item-name:has-text("${filenameB}")`)
-      ).toBeVisible({ timeout: 5_000 });
+      await uploadDocumentViaApi(filenameA, `# Doc A\n\n${KEYWORD} from A`);
+      await uploadDocumentViaApi(filenameB, `# Doc B\n\n${KEYWORD} from B`);
 
       async function findDocIdByName(name: string): Promise<number> {
         for (let i = 0; i < 20; i++) {
@@ -324,25 +294,8 @@ cleanupTest.describe('Cross-page RAG integration - E2E (#25)', () => {
       // 额外上传一个"诱饵"文档，避免删除目标后 totalCount=0 导致
       // ChatPage 隐藏 context-toggle（页面只在有文档时才渲染选择入口）。
       const decoyFilename = `cross-page-rag-decoy-${Date.now()}.md`;
-      await page.goto('/');
-      await page.waitForSelector('.upload-zone');
-      const fileInput = page.locator('[data-testid="novel-file-input"]');
-      await fileInput.setInputFiles({
-        name: filename,
-        mimeType: 'text/markdown',
-        buffer: Buffer.from(`# Delete Me\n\n${KEYWORD}`),
-      });
-      await expect(
-        page.locator(`.doc-item-name:has-text("${filename}")`)
-      ).toBeVisible({ timeout: 5_000 });
-      await fileInput.setInputFiles({
-        name: decoyFilename,
-        mimeType: 'text/markdown',
-        buffer: Buffer.from(`# Decoy\n\n${KEYWORD}`),
-      });
-      await expect(
-        page.locator(`.doc-item-name:has-text("${decoyFilename}")`)
-      ).toBeVisible({ timeout: 5_000 });
+      await uploadDocumentViaApi(filename, `# Delete Me\n\n${KEYWORD}`);
+      await uploadDocumentViaApi(decoyFilename, `# Decoy\n\n${KEYWORD}`);
       let docId: number | undefined;
       let decoyDocId: number | undefined;
       for (let i = 0; i < 20; i++) {

@@ -236,6 +236,18 @@ async def update_document(
     return document
 
 
+async def get_document(db: AsyncSession, document_id: int) -> Document:
+    """单文档详情：管理端编辑页按 id 拉取预填数据。
+
+    不存在时抛 :class:`DocumentNotFoundError`。
+    """
+    result = await db.execute(select(Document).where(Document.id == document_id))
+    document = result.scalar_one_or_none()
+    if not document:
+        raise DocumentNotFoundError("Document not found")
+    return document
+
+
 async def list_documents(
     db: AsyncSession,
     *,

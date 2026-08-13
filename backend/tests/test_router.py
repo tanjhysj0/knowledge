@@ -15,7 +15,8 @@ EXPECTED_METHODS = {
     "/health": {"GET"},
     "/api/documents/upload": {"POST"},
     "/api/documents": {"GET"},
-    "/api/documents/{document_id}": {"DELETE"},
+    # #53/#54：单文档 PATCH 编辑与 GET 详情（编辑页按 id 拉取预填数据）
+    "/api/documents/{document_id}": {"DELETE", "GET", "PATCH"},
     # #47：封面静态资源端点
     "/api/covers/{filename}": {"GET"},
     "/api/chat": {"POST"},

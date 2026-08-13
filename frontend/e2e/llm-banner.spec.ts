@@ -15,6 +15,17 @@ test.describe('Chat Page - LLM 异常 Banner (Issue #45)', () => {
   test.describe.configure({ mode: 'serial' });
 
   test.beforeEach(async ({ page }) => {
+    // 清理历史会话：残留的历史消息会干扰下方 .message 计数断言。
+    // 本 spec 仅 3 个用例，逐个 DELETE 不会触及 5s 超时。
+    // 已知权衡：并行模式（E2E_WORKERS>1）下可能删除其他 spec 正在使用的
+    // 会话；默认 make test 串行（--workers=1）无此风险。
+    const listRes = await page.request.get('/api/conversations');
+    if (listRes.ok()) {
+      const list: Array<{ id: number }> = await listRes.json();
+      for (const conv of list) {
+        await page.request.delete(`/api/conversations/${conv.id}`).catch(() => {});
+      }
+    }
     await page.goto('/chat');
     await page.waitForSelector('textarea');
     await expect(

@@ -18,52 +18,7 @@
   color: #666;
 }
 
-.upload-zone {
-  border: 2px dashed #ccc;
-  border-radius: 8px;
-  padding: 20px;
-  text-align: center;
-  cursor: pointer;
-  margin-bottom: 16px;
-  transition: border-color 0.2s;
-}
-
-/* #49：小说正文 + 封面两个独立拖拽区并排 */
-.upload-grid {
-  display: flex;
-  gap: 16px;
-}
-
-.upload-grid .upload-zone {
-  flex: 1;
-  margin-bottom: 0;
-}
-
-.cover-upload-zone {
-  background: #fafafa;
-}
-
-.cover-upload-zone .cover-ready {
-  color: #1976d2;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.upload-zone:hover,
-.upload-zone.dragging {
-  border-color: #1976d2;
-}
-
-.upload-zone p {
-  margin: 0 0 4px;
-}
-
-.upload-zone small {
-  color: #999;
-  font-size: 12px;
-}
+/* #50：首页上传区已移除（管理能力迁至 /admin） */
 
 .doc-list {
   list-style: none;
@@ -428,13 +383,6 @@
   border-radius: 4px;
   margin-right: 12px;
   flex-shrink: 0;
-}
-
-.doc-item-cover-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #f3f5f9;
 }
 
 .doc-item:last-child {
@@ -817,9 +765,11 @@
 }
 
 .admin-menu-item {
+  display: block;
   background: none;
   border: none;
   text-align: left;
+  text-decoration: none;
   padding: 10px 12px;
   border-radius: 6px;
   font-size: 14px;
@@ -840,6 +790,14 @@
 .admin-content {
   flex: 1;
   min-width: 0;
+}
+
+/* 列表页头部：标题 + 新建按钮并排（#54）。 */
+.admin-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
 }
 
 .admin-list-title {
@@ -965,4 +923,78 @@
 .novel-submit-btn:disabled {
   background: #ccc;
   cursor: not-allowed;
+}
+
+/* #50：首页纯展示书架（卡片网格，无导航无管理能力） */
+.shelf-page {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* 桌面多列自适应（列宽约 160px 起），窄屏单列 */
+.shelf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 480px) {
+  .shelf-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 单张卡片：封面大图（2:3）+ 底部居中书名；hover 微放大 + 阴影 */
+.novel-card {
+  cursor: pointer;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.novel-card:hover {
+  transform: scale(1.04);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+}
+
+.novel-card-cover {
+  aspect-ratio: 2 / 3;
+  background: #f3f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.novel-card-cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.novel-card-cover-default {
+  width: 30%;
+  height: 30%;
+}
+
+.novel-card-title {
+  padding: 8px 10px;
+  font-size: 14px;
+  color: #333;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 空状态居中提示 */
+.shelf-empty {
+  padding: 80px 32px;
+  text-align: center;
+  color: #999;
+  font-size: 14px;
 }

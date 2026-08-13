@@ -2,9 +2,11 @@ import { expect, request as apiRequest } from '@playwright/test';
 import { test as cleanupTest, BACKEND_BASE } from './helpers/cleanup';
 
 /**
- * Issue #53: /admin 管理端。
- * 覆盖：左侧菜单、3 字段表单（小说名必填/封面可选默认图/文本文件必填）、
- * 上传、编辑（改名/换封面）、删除、LLM 设置 tab。
+ * Issue #54: 管理端独立路由。
+ * /admin 小说列表页；/admin/novels/new 与 /admin/novels/:id 共用编辑页
+ * （编辑按 id 拉取详情预填，刷新不丢）；/admin/settings LLM 设置独立路由。
+ * 覆盖：左侧菜单（高亮随路由）、3 字段表单、上传、编辑（改名/换封面）、
+ * 编辑页刷新恢复、删除、LLM 设置路由。
  */
 
 interface DocumentSummary {
@@ -42,43 +44,54 @@ async function pollUntil(
   return items;
 }
 
-cleanupTest.describe('Admin Page（/admin 管理端）- E2E (#53)', () => {
+type Page = import('@playwright/test').Page;
+
+const titleInput = (page: Page) => page.locator('[data-testid="novel-title-input"]');
+const textFileInput = (page: Page) => page.locator('[data-testid="novel-text-file-input"]');
+const coverFileInput = (page: Page) => page.locator('[data-testid="admin-cover-file-input"]');
+const submitBtn = (page: Page) => page.locator('[data-testid="novel-submit-btn"]');
+const preview = (page: Page) => page.locator('[data-testid="novel-form-cover-preview"]');
+const menuItem = (page: Page, text: string) =>
+  page.locator('.admin-menu-item').filter({ hasText: text });
+
+cleanupTest.describe('Admin Page（管理端独立路由）- E2E (#54)', () => {
   cleanupTest.beforeEach(async ({ page }) => {
+    // 上传用例含后端 embedding 推理（CPU），首次冷启动可能超过默认 5s。
+    cleanupTest.setTimeout(30_000);
     await page.goto('/admin');
     await page.waitForLoadState('networkidle').catch(() => {});
   });
 
-  const titleInput = (page: import('@playwright/test').Page) =>
-    page.locator('[data-testid="novel-title-input"]');
-  const textFileInput = (page: import('@playwright/test').Page) =>
-    page.locator('[data-testid="novel-text-file-input"]');
-  const coverFileInput = (page: import('@playwright/test').Page) =>
-    page.locator('[data-testid="admin-cover-file-input"]');
-  const submitBtn = (page: import('@playwright/test').Page) =>
-    page.locator('[data-testid="novel-submit-btn"]');
-  const preview = (page: import('@playwright/test').Page) =>
-    page.locator('[data-testid="novel-form-cover-preview"]');
-
-  cleanupTest('应展示左侧菜单与 3 字段表单', async ({ page }) => {
+  cleanupTest('应展示左侧菜单与小说列表，新建按钮跳转编辑页', async ({ page }) => {
     await expect(page.locator('.admin-brand')).toContainText('管理端');
+    await expect(menuItem(page, '小说管理')).toBeVisible();
+    await expect(menuItem(page, 'LLM 设置')).toBeVisible();
+    // 默认路由 /admin：小说管理菜单高亮，列表页标题可见
+    await expect(menuItem(page, '小说管理')).toHaveClass(/active/);
+    await expect(page.locator('h1')).toContainText('小说管理');
 
-    const menuItems = page.locator('.admin-menu-item');
-    await expect(menuItems.nth(0)).toContainText('小说管理');
-    await expect(menuItems.nth(1)).toContainText('LLM 设置');
+    // 新建入口跳转独立编辑页
+    await page.locator('[data-testid="novel-create-btn"]').click();
+    await expect(page).toHaveURL(/\/admin\/novels\/new$/);
+  });
+
+  cleanupTest('新建页展示 3 字段表单与默认封面预览', async ({ page }) => {
+    await page.goto('/admin/novels/new');
 
     // 3 个主要字段：小说名（必填）、封面（可选）、文本文件（必填）
     await expect(titleInput(page)).toBeVisible();
     await expect(page.locator('button:has-text("选择封面")')).toBeVisible();
     await expect(textFileInput(page)).toBeVisible();
     await expect(submitBtn(page)).toContainText('上传小说');
-  });
 
-  cleanupTest('未选封面时表单预览显示默认封面图', async ({ page }) => {
+    // 未选封面时预览显示默认封面图
     await expect(preview(page).locator('svg[aria-label="默认封面"]')).toBeVisible();
     await expect(preview(page).locator('img')).toHaveCount(0);
   });
 
   cleanupTest('小说名与文本文件必填校验', async ({ page }) => {
+    await page.goto('/admin/novels/new');
+
     // 空表单提交：小说名必填
     await submitBtn(page).click();
     await expect(page.locator('text=请输入小说名')).toBeVisible();
@@ -89,10 +102,11 @@ cleanupTest.describe('Admin Page（/admin 管理端）- E2E (#53)', () => {
     await expect(page.locator('text=请选择小说文本文件')).toBeVisible();
   });
 
-  cleanupTest('填写表单上传后列表显示小说名并持久化', async ({ page, uploadedDocs }) => {
+  cleanupTest('填写表单上传后返回列表并显示小说名', async ({ page, uploadedDocs }) => {
     const title = `测试小说-${Date.now()}`;
     const filename = `admin-${Date.now()}.txt`;
 
+    await page.goto('/admin/novels/new');
     await titleInput(page).fill(title);
     await textFileInput(page).setInputFiles({
       name: filename,
@@ -101,6 +115,8 @@ cleanupTest.describe('Admin Page（/admin 管理端）- E2E (#53)', () => {
     });
     await submitBtn(page).click();
 
+    // 保存成功后返回列表页
+    await expect(page).toHaveURL(/\/admin$/);
     await expect(
       page.locator('.doc-item').filter({ hasText: title })
     ).toBeVisible({ timeout: 15_000 });
@@ -120,6 +136,7 @@ cleanupTest.describe('Admin Page（/admin 管理端）- E2E (#53)', () => {
     const title = `封面小说-${Date.now()}`;
     const filename = `admin-cover-${Date.now()}.txt`;
 
+    await page.goto('/admin/novels/new');
     await titleInput(page).fill(title);
     await coverFileInput(page).setInputFiles({
       name: 'cover.png',
@@ -159,6 +176,7 @@ cleanupTest.describe('Admin Page（/admin 管理端）- E2E (#53)', () => {
     const filename = `admin-edit-${Date.now()}.txt`;
 
     // 先上传一本
+    await page.goto('/admin/novels/new');
     await titleInput(page).fill(title);
     await textFileInput(page).setInputFiles({
       name: filename,
@@ -170,25 +188,25 @@ cleanupTest.describe('Admin Page（/admin 管理端）- E2E (#53)', () => {
     await expect(row).toBeVisible({ timeout: 15_000 });
     await uploadedDocs.track(filename);
 
-    // 进入编辑模式
+    // 编辑按钮跳转独立编辑页 /admin/novels/:id
     await row.locator('[data-testid="novel-edit-btn"]').click();
+    await expect(page).toHaveURL(/\/admin\/novels\/\d+$/);
     await expect(page.locator('h1')).toContainText('编辑小说');
     // 正文不可换：文本文件字段隐藏
     await expect(textFileInput(page)).toHaveCount(0);
     await expect(submitBtn(page)).toContainText('保存修改');
-    // 小说名预填当前值
+    // 小说名按 id 从后端拉取预填
     await expect(titleInput(page)).toHaveValue(title);
 
     // 改名保存
     await titleInput(page).fill(newTitle);
     await submitBtn(page).click();
 
+    // 保存后返回列表页并显示新名
+    await expect(page).toHaveURL(/\/admin$/);
     await expect(
       page.locator('.doc-item').filter({ hasText: newTitle })
     ).toBeVisible({ timeout: 15_000 });
-    // 保存后表单回到新建态
-    await expect(page.locator('h1')).toContainText('新建小说');
-    await expect(submitBtn(page)).toContainText('上传小说');
 
     const items = await pollUntil(page, (list) =>
       list.some((item) => item.title === newTitle)
@@ -196,10 +214,52 @@ cleanupTest.describe('Admin Page（/admin 管理端）- E2E (#53)', () => {
     expect(items.some((item) => item.title === newTitle)).toBeTruthy();
   });
 
+  cleanupTest('编辑页刷新后数据不丢', async ({ page, uploadedDocs }) => {
+    const title = `刷新测试-${Date.now()}`;
+    const filename = `admin-reload-${Date.now()}.txt`;
+
+    await page.goto('/admin/novels/new');
+    await titleInput(page).fill(title);
+    await textFileInput(page).setInputFiles({
+      name: filename,
+      mimeType: 'text/plain',
+      buffer: Buffer.from('reload e2e content'),
+    });
+    await submitBtn(page).click();
+    await expect(
+      page.locator('.doc-item').filter({ hasText: title })
+    ).toBeVisible({ timeout: 15_000 });
+    await uploadedDocs.track(filename);
+
+    const items = await pollUntil(page, (list) =>
+      list.some((item) => item.title === title)
+    );
+    const docId = items.find((item) => item.title === title)!.id;
+
+    // 直达编辑页并刷新，预填数据仍在
+    await page.goto(`/admin/novels/${docId}`);
+    await expect(page.locator('h1')).toContainText('编辑小说');
+    await expect(titleInput(page)).toHaveValue(title);
+    await page.reload();
+    await expect(page.locator('h1')).toContainText('编辑小说');
+    await expect(titleInput(page)).toHaveValue(title);
+  });
+
+  cleanupTest('编辑页直达不存在的 id 显示错误提示', async ({ page }) => {
+    await page.goto('/admin/novels/99999999');
+    await expect(page.locator('text=小说不存在或已被删除')).toBeVisible({
+      timeout: 5_000,
+    });
+    // 取消可返回列表
+    await page.locator('[data-testid="novel-cancel-btn"]').click();
+    await expect(page).toHaveURL(/\/admin$/);
+  });
+
   cleanupTest('编辑时更换封面并保存', async ({ page, uploadedDocs }) => {
     const title = `换封面-${Date.now()}`;
     const filename = `admin-recover-${Date.now()}.txt`;
 
+    await page.goto('/admin/novels/new');
     await titleInput(page).fill(title);
     await textFileInput(page).setInputFiles({
       name: filename,
@@ -218,6 +278,7 @@ cleanupTest.describe('Admin Page（/admin 管理端）- E2E (#53)', () => {
       .filter({ hasText: title })
       .locator('[data-testid="novel-edit-btn"]')
       .click();
+    await expect(page.locator('h1')).toContainText('编辑小说');
     await coverFileInput(page).setInputFiles({
       name: 'new-cover.png',
       mimeType: 'image/png',
@@ -237,6 +298,7 @@ cleanupTest.describe('Admin Page（/admin 管理端）- E2E (#53)', () => {
     const title = `删除测试-${Date.now()}`;
     const filename = `admin-del-${Date.now()}.txt`;
 
+    await page.goto('/admin/novels/new');
     await titleInput(page).fill(title);
     await textFileInput(page).setInputFiles({
       name: filename,
@@ -254,12 +316,12 @@ cleanupTest.describe('Admin Page（/admin 管理端）- E2E (#53)', () => {
     ).toHaveCount(0, { timeout: 15_000 });
   });
 
-  cleanupTest('切换 LLM 设置 tab 显示配置表单', async ({ page }) => {
-    await page
-      .locator('.admin-menu-item')
-      .filter({ hasText: 'LLM 设置' })
-      .click();
+  cleanupTest('LLM 设置独立路由展示配置表单，菜单高亮随路由', async ({ page }) => {
+    await menuItem(page, 'LLM 设置').click();
 
+    await expect(page).toHaveURL(/\/admin\/settings$/);
+    await expect(menuItem(page, 'LLM 设置')).toHaveClass(/active/);
+    await expect(menuItem(page, '小说管理')).not.toHaveClass(/active/);
     await expect(page.locator('text=LLM 配置')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('button:has-text("保存配置")')).toBeVisible();
     await expect(page.locator('button:has-text("重置")')).toBeVisible();

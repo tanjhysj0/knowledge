@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import { test as cleanupTest } from './helpers/cleanup';
@@ -39,6 +39,9 @@ function resolveConfiguredLlmBaseUrl(): string {
 cleanupTest.describe.configure({ mode: 'serial' });
 cleanupTest.describe('Settings Page - True E2E', () => {
   cleanupTest.beforeEach(async ({ page, settingsGuard }) => {
+    // settingsGuard fixture 的 teardown 会在用例结束时恢复 LLM 设置快照；
+    // 即使本用例不直接读写它也必须注入，否则设置改动会泄漏到后续用例。
+    void settingsGuard;
     // 进入设置页
     await page.goto('/settings');
     await page.waitForSelector('input[type="text"]');
@@ -167,7 +170,6 @@ cleanupTest.describe('Settings Page - True E2E', () => {
     await page.waitForSelector('input[type="text"]');
 
     // 先保存一个已知值，再修改为临时值，点击重置应恢复
-    const llmBaseUrlInput = page.locator('input[type="text"]').first();
     const llmModelInput = page.locator('input[type="text"]').nth(1);
 
     await llmModelInput.fill('known-test-model');

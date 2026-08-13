@@ -101,6 +101,18 @@ async def list_documents(
     )
 
 
+@router.get("/{document_id}", response_model=DocumentResponse)
+async def get_document(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """单文档详情：管理端编辑页按 id 拉取预填数据。不存在返回 404。"""
+    try:
+        return await document_service.get_document(db=db, document_id=document_id)
+    except DocumentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.patch("/{document_id}", response_model=DocumentResponse)
 async def update_document(
     document_id: int,

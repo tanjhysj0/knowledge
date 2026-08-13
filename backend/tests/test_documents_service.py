@@ -19,6 +19,7 @@ from app.services.documents import (
     DocumentParseError,
     DocumentTitleError,
     delete_document,
+    get_document,
     list_documents,
     update_document,
     upload_document,
@@ -560,6 +561,42 @@ class TestUpdateDocument:
             )
 
         assert db.commits == 0
+
+
+class TestGetDocument:
+    """单文档详情：管理端编辑页按 id 拉取预填数据。"""
+
+    def _make_doc(self, **kwargs):
+        defaults = dict(
+            id=3,
+            filename="novel.txt",
+            file_type="txt",
+            size=100,
+            file_path="/uploads/novel.txt",
+            chunk_count=2,
+            title="十日终焉",
+            cover_image_path="covers/3.png",
+        )
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    @pytest.mark.asyncio
+    async def test_returns_document_when_found(self):
+        doc = self._make_doc()
+        db = _FakeAsyncSession(scalar_value=0, rows=[doc])
+
+        result = await get_document(db, document_id=3)
+
+        assert result is doc
+        assert result.title == "十日终焉"
+        assert result.cover_image_path == "covers/3.png"
+
+    @pytest.mark.asyncio
+    async def test_missing_document_raises_not_found(self):
+        db = _FakeAsyncSession(scalar_value=0, missing=True)
+
+        with pytest.raises(DocumentNotFoundError):
+            await get_document(db, document_id=99)
 
 
 class TestListDocuments:

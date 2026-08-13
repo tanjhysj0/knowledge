@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 test.describe('Chat Page - E2E', () => {
   // 后端通过 X-E2E-Test Header 自动返回 MockLLMProvider；前端不再额外拦截。
