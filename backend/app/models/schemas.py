@@ -67,9 +67,14 @@ class ConversationBase(BaseModel):
 
 
 class ConversationCreate(ConversationBase):
-    """``POST /api/conversations`` 请求体。``title`` 可选；缺省时由后端赋默认值。"""
+    """``POST /api/conversations`` 请求体。``title`` 可选；缺省时由后端赋默认值。
 
-    pass
+    #52：``document_id`` 可选——提供时按 (client_id, document_id) 幂等
+    返回既有绑定会话（不存在则新建并绑定），重复点击同一小说卡片
+    不会另开新会话。
+    """
+
+    document_id: Optional[int] = None
 
 
 class ConversationUpdate(BaseModel):
@@ -82,9 +87,15 @@ class ConversationUpdate(BaseModel):
 
 
 class ConversationResponse(ConversationBase):
-    """会话响应载荷：返回 id / title / message_count / 时间戳。"""
+    """会话响应载荷：返回 id / title / message_count / 时间戳。
+
+    #52：透出 ``client_id``（会话归属客户端）与 ``document_id``
+    （绑定小说 id，null = 通用会话），前端据此恢复绑定会话。
+    """
 
     id: int
+    client_id: str
+    document_id: Optional[int] = None
     message_count: int
     created_at: datetime
     updated_at: datetime

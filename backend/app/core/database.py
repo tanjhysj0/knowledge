@@ -71,5 +71,31 @@ async def init_db():
                 "ALTER TABLE documents "
                 "ADD COLUMN IF NOT EXISTS title VARCHAR(255)"
             )
+            # #52：conversations 表补齐客户端隔离与小说绑定两列；
+            # 存量会话 client_id 补齐为 'default'、document_id 保持 NULL。
+            await conn.exec_driver_sql(
+                "ALTER TABLE conversations "
+                "ADD COLUMN IF NOT EXISTS client_id VARCHAR(64) "
+                "NOT NULL DEFAULT 'default'"
+            )
+            await conn.exec_driver_sql(
+                "ALTER TABLE conversations "
+                "ADD COLUMN IF NOT EXISTS document_id INTEGER"
+            )
+            await conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_conversations_client_id "
+                "ON conversations (client_id)"
+            )
+            await conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_conversations_document_id "
+                "ON conversations (document_id)"
+            )
+            # #52：绑定会话幂等的数据库级兜底——同一客户端下
+            # (client_id, document_id) 唯一（并发下防重复绑定）。
+            await conn.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_conversations_client_document "
+                "ON conversations (client_id, document_id) "
+                "WHERE document_id IS NOT NULL"
+            )
     except Exception as e:
         print(f"Database initialization skipped: {e}")

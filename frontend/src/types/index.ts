@@ -73,6 +73,10 @@ export interface LLMStatus {
 export interface Conversation {
   id: number;
   title: string | null;
+  // #52：会话归属的客户端标识（后端透出；前端不直接使用）。
+  client_id: string;
+  // #52：绑定的小说 id；null = 未绑定小说的通用会话。
+  document_id: number | null;
   message_count: number;
   created_at: string;
   updated_at: string;
@@ -80,6 +84,8 @@ export interface Conversation {
 
 export interface ConversationCreate {
   title?: string;
+  // #52：可选绑定小说 id；同 (client_id, document_id) 幂等返回既有会话。
+  document_id?: number;
 }
 
 export interface ConversationUpdate {

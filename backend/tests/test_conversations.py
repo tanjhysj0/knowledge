@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.services import conversations as conv_service
 from app.services.conversations import (
@@ -15,6 +16,7 @@ from app.services.conversations import (
     create_conversation,
     delete_conversation,
     get_conversation,
+    get_or_create_conversation,
     list_conversations,
     list_messages,
     touch_conversation,
@@ -45,36 +47,50 @@ class _FakeExecuteResult:
         return _FakeScalars(self._rows)
 
 
-def _where_id(statement) -> int | None:
-    """从 ``select(...).where(Conversation.id == X)`` 中提取 id 值。
+def _extract_filters(statement) -> dict:
+    """从 ``select(...).where(...)`` 中提取 ``列名 -> 值`` 过滤条件。
 
-    仅供单元测试 stub 使用：对真实 SQL 语义不强求。
+    仅支持 ``Column == 常量`` 形式的单条件或它们的 and 组合；
+    仅供单元测试 stub 使用，对真实 SQL 语义不强求。
     """
-    clause = getattr(statement, "_whereclause", None) or getattr(
-        statement, "whereclause", None
-    )
+    # 注意：不能写 ``a or b``——SQLAlchemy 子句的 ``__bool__`` 会抛异常。
+    clause = getattr(statement, "_whereclause", None)
     if clause is None:
-        return None
-    right = getattr(clause, "right", None)
-    if right is None:
-        return None
-    value = getattr(right, "value", None)
-    if isinstance(value, (int, float)):
-        return int(value)
-    # SQLAlchemy 在 2.x 上把常量包成 BindParameter，取其 value
-    return getattr(right, "value", None)
+        clause = getattr(statement, "whereclause", None)
+    if clause is None:
+        return {}
+    conditions = getattr(clause, "clauses", None)
+    if conditions is None:
+        conditions = [clause]
+    filters = {}
+    for cond in conditions:
+        left = getattr(cond, "left", None)
+        right = getattr(cond, "right", None)
+        key = getattr(left, "key", None)
+        value = getattr(right, "value", None)
+        if key is not None:
+            filters[key] = value
+    return filters
 
 
 class _FakeAsyncSession:
     """最小 AsyncSession 替身：按 ``Conversation.id == X`` 过滤条件查表。"""
 
-    def __init__(self, *, conversations=None, messages=None):
+    def __init__(
+        self,
+        *,
+        conversations=None,
+        messages=None,
+        raise_integrity_on_commit=False,
+    ):
         self.conversations = list(conversations or [])
         self.messages = list(messages or [])
         self.added: list = []
         self.deleted: list = []
         self.commits = 0
+        self.rollbacks = 0
         self.refreshed: list = []
+        self.raise_integrity_on_commit = raise_integrity_on_commit
 
     def add(self, obj):
         self.added.append(obj)
@@ -100,6 +116,17 @@ class _FakeAsyncSession:
 
     async def commit(self):
         self.commits += 1
+        # 模拟唯一索引冲突（#52 并发绑定竞态）：仅首次 commit 抛出。
+        if self.raise_integrity_on_commit:
+            self.raise_integrity_on_commit = False
+            raise IntegrityError(
+                "INSERT INTO conversations ...",
+                {},
+                Exception("duplicate key value violates unique constraint"),
+            )
+
+    async def rollback(self):
+        self.rollbacks += 1
 
     async def refresh(self, obj):
         now = datetime.utcnow()
@@ -111,11 +138,24 @@ class _FakeAsyncSession:
 
     async def execute(self, statement):
         sql = str(statement).lower()
-        target_id = _where_id(statement)
+        filters = _extract_filters(statement)
+        target_id = filters.get("id")
+        target_client = filters.get("client_id")
+        target_document = filters.get("document_id")
         if "from conversations" in sql:
             rows = self.conversations
             if target_id is not None:
                 rows = [c for c in rows if c.id == target_id]
+            if target_client is not None:
+                rows = [
+                    c for c in rows if getattr(c, "client_id", None) == target_client
+                ]
+            if target_document is not None:
+                rows = [
+                    c
+                    for c in rows
+                    if getattr(c, "document_id", None) == target_document
+                ]
             if len(rows) == 1 and target_id is not None:
                 return _FakeExecuteResult(value=rows[0])
             return _FakeExecuteResult(rows=list(rows))
@@ -132,6 +172,8 @@ def _make_conv(id: int, **kwargs):
     return SimpleNamespace(
         id=id,
         title=kwargs.get("title", f"会话{id}"),
+        client_id=kwargs.get("client_id", "default"),
+        document_id=kwargs.get("document_id", None),
         message_count=kwargs.get("message_count", 0),
         created_at=kwargs.get("created_at", now),
         updated_at=kwargs.get("updated_at", now),
@@ -168,6 +210,99 @@ async def test_create_conversation_assigns_unique_ids():
     c1 = await create_conversation(db)
     c2 = await create_conversation(db)
     assert c1.id != c2.id
+
+
+# ---------------------------------------------------------------------------
+# #52：客户端隔离与小说绑定
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_conversation_defaults_client_id_and_unbound_document():
+    db = _FakeAsyncSession()
+    conv = await create_conversation(db, title="通用会话")
+    assert conv.client_id == "default"
+    assert conv.document_id is None
+
+
+@pytest.mark.asyncio
+async def test_create_conversation_binds_client_id_and_document_id():
+    db = _FakeAsyncSession()
+    conv = await create_conversation(
+        db, title="绑定", client_id="client-a", document_id=5
+    )
+    assert conv.client_id == "client-a"
+    assert conv.document_id == 5
+
+
+@pytest.mark.asyncio
+async def test_list_conversations_filters_by_client_id():
+    db = _FakeAsyncSession(
+        conversations=[
+            _make_conv(1, client_id="client-a"),
+            _make_conv(2, client_id="client-b"),
+        ]
+    )
+    items = await list_conversations(db, client_id="client-a")
+    assert [c.id for c in items] == [1]
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_returns_existing_bound_conversation():
+    bound = _make_conv(3, client_id="client-a", document_id=5, title="既有标题")
+    db = _FakeAsyncSession(conversations=[bound])
+    conv = await get_or_create_conversation(
+        db, client_id="client-a", title="新标题", document_id=5
+    )
+    # 返回既有绑定会话，不新建、不覆盖标题
+    assert conv.id == 3
+    assert conv.title == "既有标题"
+    assert db.added == []
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_creates_new_when_no_bound_conversation():
+    db = _FakeAsyncSession(
+        conversations=[_make_conv(1, client_id="client-a", document_id=4)]
+    )
+    conv = await get_or_create_conversation(
+        db, client_id="client-a", title="新绑定", document_id=5
+    )
+    assert conv.id == 2
+    assert conv.client_id == "client-a"
+    assert conv.document_id == 5
+    assert conv.title == "新绑定"
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_without_document_creates_plain_conversation():
+    db = _FakeAsyncSession()
+    conv = await get_or_create_conversation(db, client_id="client-a")
+    assert conv.client_id == "client-a"
+    assert conv.document_id is None
+    assert conv.title == "新对话"
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_recovers_on_unique_conflict():
+    """#52：并发竞态下 commit 撞唯一索引 → 回滚后重查返回既有绑定行。"""
+    db = _FakeAsyncSession(raise_integrity_on_commit=True)
+    conv = await get_or_create_conversation(
+        db, client_id="client-a", title="并发创建", document_id=5
+    )
+    # 回滚后重查拿回绑定行（幂等语义：仍是 client-a 绑定 doc 5 的那条）
+    assert conv.client_id == "client-a"
+    assert conv.document_id == 5
+    assert db.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_plain_creation_reraises_integrity_error():
+    """通用会话（无绑定）创建时撞 IntegrityError 不应吞错重查。"""
+    db = _FakeAsyncSession(raise_integrity_on_commit=True)
+    with pytest.raises(IntegrityError):
+        await get_or_create_conversation(db, client_id="client-a")
+    assert db.rollbacks == 0
 
 
 @pytest.mark.asyncio

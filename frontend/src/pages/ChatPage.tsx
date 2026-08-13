@@ -129,10 +129,17 @@ export default function ChatPage() {
       .list()
       .then(async (list) => {
         if (focusedDocId !== null) {
-          // #51 路由聚焦：总是新建一个会话并激活，标题默认取小说名；
-          // 历史会话保留在列表中（新建的置顶）。
+          // #51 路由聚焦 + #52 会话绑定：先找该小说在本地已有绑定会话，
+          // 有则直接激活恢复历史（重复点击同一卡片不另开新会话）；
+          // 没有才新建并绑定。ref 防止 StrictMode 双执行重复创建。
           if (focusedConvCreatedRef.current) return;
           focusedConvCreatedRef.current = true;
+          const bound = list.find((c) => c.document_id === focusedDocId) ?? null;
+          if (bound) {
+            setConversations(list);
+            setActiveConvId(bound.id);
+            return;
+          }
           try {
             const created = await createFocusedConversation(focusedDocId);
             setConversations([created, ...list]);
@@ -162,7 +169,12 @@ export default function ChatPage() {
       });
   }, []);
 
-  /** #51：按小说 id 新建会话——标题默认取小说名；取不到时回退后端默认。 */
+  /** #51/#52：按小说 id 新建绑定会话——标题默认取小说名；取不到时回退后端默认。
+   *
+   * 后端 POST 带 ``document_id`` 时按 (client_id, document_id) 幂等：
+   * 该客户端下已有绑定会话则直接返回既有（本方法调用前已先行查列表，
+   * 此幂等主要防多个标签页竞态）。
+   */
   const createFocusedConversation = async (docId: number) => {
     let title: string | undefined;
     try {
@@ -171,7 +183,9 @@ export default function ChatPage() {
     } catch (err) {
       console.warn('获取小说信息失败，会话标题回退默认:', err);
     }
-    return conversationApi.create(title ? { title } : {});
+    return conversationApi.create(
+      title ? { title, document_id: docId } : { document_id: docId }
+    );
   };
 
   // 激活会话变化时：拉取该会话的消息历史（#35）。

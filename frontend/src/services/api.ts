@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getClientId } from '../utils/clientId';
 import type {
   Document,
   ChatMessage,
@@ -15,6 +16,13 @@ import type {
 
 const api = axios.create({
   baseURL: '/api',
+});
+
+// #52：所有请求统一携带 X-Client-Id（首次访问生成并持久化到
+// localStorage），后端据此按浏览器（客户端）隔离会话空间。
+api.interceptors.request.use((config) => {
+  config.headers['X-Client-Id'] = getClientId();
+  return config;
 });
 
 export const documentApi = {

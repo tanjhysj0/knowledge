@@ -1,7 +1,12 @@
-"""会话路由层（#34）：纯 HTTP 适配 + 服务调用。"""
+"""会话路由层（#34）：纯 HTTP 适配 + 服务调用。
+
+#52：会话空间按客户端隔离——``X-Client-Id`` 请求头决定会话归属的
+client_id；GET 列表按其过滤，POST 带 ``document_id`` 时按
+(client_id, document_id) 幂等返回绑定会话。
+"""
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -16,21 +21,44 @@ from app.services import conversations as conversation_service
 router = APIRouter()
 
 
+def _client_id_from(request: Request) -> str | None:
+    """#52：从 ``X-Client-Id`` 头取客户端标识；缺失返回 ``None``（回退/不过滤）。"""
+    return request.headers.get("X-Client-Id")
+
+
 @router.get("", response_model=List[ConversationResponse])
-async def list_conversations(db: AsyncSession = Depends(get_db)):
-    """按 ``updated_at`` 倒序返回全部会话。"""
-    items = await conversation_service.list_conversations(db)
+async def list_conversations(
+    request: Request, db: AsyncSession = Depends(get_db)
+):
+    """按 ``updated_at`` 倒序返回会话。
+
+    #52：携带 ``X-Client-Id`` 时仅返回该客户端的会话（跨浏览器不可见）；
+    缺失时返回全量（存量调用与测试清理的兼容视图）。
+    """
+    items = await conversation_service.list_conversations(
+        db, client_id=_client_id_from(request)
+    )
     return items
 
 
 @router.post("", response_model=ConversationResponse)
 async def create_conversation(
+    request: Request,
     payload: ConversationCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    """创建新会话；``title`` 缺省回落到 ``"新对话"``。"""
-    conv = await conversation_service.create_conversation(
-        db=db, title=payload.title
+    """创建新会话；``title`` 缺省回落到 ``"新对话"``。
+
+    #52：``document_id`` 提供时按 (client_id, document_id) 幂等返回
+    既有绑定会话（重复点击同一小说卡片不会另开新会话）；``client_id``
+    取自 ``X-Client-Id`` 头，缺失回退默认客户端。
+    """
+    conv = await conversation_service.get_or_create_conversation(
+        db=db,
+        client_id=_client_id_from(request)
+        or conversation_service.DEFAULT_CLIENT_ID,
+        title=payload.title,
+        document_id=payload.document_id,
     )
     return conv
 
