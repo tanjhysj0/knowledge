@@ -2,32 +2,22 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   chatApi,
-  conversationApi,
   documentApi,
   llmStatusApi,
   LLMUnavailableError,
 } from '../services/api';
-import type { ChatMessage as ApiChatMessage, Conversation, Document } from '../types';
+import type { Document } from '../types';
 import { SSEParser } from '../utils/sseParser';
 import { getDisplayTitle } from '../utils/format';
 import { parseDocId, parseSources } from '../utils/chat';
+import { useConversations } from '../hooks/useConversations';
+import ConversationSidebar from '../components/ConversationSidebar';
 import '../App.css';
 
 /** #45 聊天页输入区上方的 LLM 异常 banner。 */
 interface LLMBannerState {
   message: string;
   showSettingsLink: boolean;
-}
-
-interface ChatMessage {
-  id: number;
-  role: string;
-  content: string;
-  thinking?: string;
-  /** RAG 检索命中的文档来源列表（#33），如 ``["doc_1", "doc_3"]``。空数组 / undefined = 未命中。 */
-  sources?: string[];
-  /** 发送该消息时选中的文档（后端逗号分隔字符串）；仅 user 消息用于恢复会话文档上下文。 */
-  documentIds?: string | null;
 }
 
 /** 把 ``doc`` 路由参数解析为合法小说 id（无参 / 非法返回 null）。 */
@@ -41,28 +31,30 @@ export default function ChatPage() {
   // #51：路由聚焦单小说（/chat?doc=<id>）。null = 无参访问，激活会话列表首条。
   const [searchParams] = useSearchParams();
   const focusedDocId = parseFocusedDocId(searchParams.get('doc'));
-  // StrictMode 下挂载 effect 会执行两次：聚焦建会话路径用 ref 防止
-  // 重复创建（两次 list 都在首条 create 落地前发出，都会看到空列表）。
-  const focusedConvCreatedRef = useRef(false);
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [thinkingOpen, setThinkingOpen] = useState<Record<number, boolean>>({});
-  // 会话（#35）：左侧栏列表 + 当前激活 id。会话只能由首页小说卡片进入
-  // 时创建（#52 绑定小说），无会话时不自动创建。
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeConvId, setActiveConvId] = useState<number | null>(null);
-  // 防止快速连续点击同一会话的删除 / 切换按钮。
-  const [sidebarBusy, setSidebarBusy] = useState(false);
-  // 切换会话时取消 in-flight SSE 流。
+  // 切换会话时取消 in-flight SSE 流（会话 hook 与发送流程共用）。
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // #45：preflight 检出的 LLM 状态 + 用户主动 dismiss 标志。null = 正常无 banner。
   const [llmBanner, setLlmBanner] = useState<LLMBannerState | null>(null);
   const [llmBannerDismissed, setLlmBannerDismissed] = useState(false);
+
+  // #59：会话域逻辑（列表加载 / 聚焦新建 / 删除 / 切换 / 消息历史）收敛到 hook。
+  const {
+    conversations,
+    activeConvId,
+    sidebarBusy,
+    messages,
+    setMessages,
+    thinkingOpen,
+    handleDeleteConversation,
+    handleSwitchConversation,
+    handleToggleThinking,
+  } = useConversations({ focusedDocId, abortRef, setIsLoading, setError });
 
   // #45：进入聊天页时拉取 LLM 可用性；未配置立刻显示红字 banner（带"去设置"链接）。
   useEffect(() => {
@@ -85,7 +77,7 @@ export default function ChatPage() {
     };
   }, []);
 
-  // 加载可用文档与会话列表（#35）。#51 聚焦参数只在挂载时确定一次——
+  // 加载可用文档列表（#35）。#51 聚焦参数只在挂载时确定一次——
   // 首页卡片跳转 /chat?doc=<id> 必然重新挂载，无需响应同路由参数变化。
   useEffect(() => {
     documentApi.list(1, 100)
@@ -95,83 +87,7 @@ export default function ChatPage() {
       .catch((err) => {
         console.error('加载文档列表失败:', err);
       });
-
-    conversationApi
-      .list()
-      .then(async (list) => {
-        if (focusedDocId !== null) {
-          // #51 路由聚焦 + #52 会话绑定：先找该小说在本地已有绑定会话，
-          // 有则直接激活恢复历史（重复点击同一卡片不另开新会话）；
-          // 没有才新建并绑定。ref 防止 StrictMode 双执行重复创建。
-          if (focusedConvCreatedRef.current) return;
-          focusedConvCreatedRef.current = true;
-          const bound = list.find((c) => c.document_id === focusedDocId) ?? null;
-          if (bound) {
-            setConversations(list);
-            setActiveConvId(bound.id);
-            return;
-          }
-          try {
-            const created = await createFocusedConversation(focusedDocId);
-            setConversations([created, ...list]);
-            setActiveConvId(created.id);
-            setMessages([]);
-          } catch (err) {
-            // 创建失败时重置守卫，允许 StrictMode 第二次执行重试
-            focusedConvCreatedRef.current = false;
-            setError('新建会话失败，请稍后重试');
-            console.error('聚焦新建会话失败:', err);
-          }
-        } else if (list.length > 0) {
-          setConversations(list);
-          setActiveConvId(list[0].id);
-        }
-      })
-      .catch((err) => {
-        console.error('加载会话列表失败:', err);
-      });
   }, []);
-
-  /** #51/#52：按小说 id 新建绑定会话——标题默认取小说名；取不到时回退后端默认。
-   *
-   * 后端 POST 带 ``document_id`` 时按 (client_id, document_id) 幂等：
-   * 该客户端下已有绑定会话则直接返回既有（本方法调用前已先行查列表，
-   * 此幂等主要防多个标签页竞态）。
-   */
-  const createFocusedConversation = async (docId: number) => {
-    let title: string | undefined;
-    try {
-      const doc = await documentApi.get(docId);
-      title = getDisplayTitle(doc);
-    } catch (err) {
-      console.warn('获取小说信息失败，会话标题回退默认:', err);
-    }
-    return conversationApi.create(
-      title ? { title, document_id: docId } : { document_id: docId }
-    );
-  };
-
-  // 激活会话变化时：拉取该会话的消息历史（#35）。
-  useEffect(() => {
-    if (activeConvId === null) return;
-    let cancelled = false;
-    conversationApi
-      .messages(activeConvId)
-      .then((items: ApiChatMessage[]) => {
-        if (cancelled) return;
-        setMessages(
-          items.map((m) => ({ id: m.id, role: m.role, content: m.content }))
-        );
-        setThinkingOpen({});
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.error('加载会话消息失败:', err);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeConvId]);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -188,49 +104,6 @@ export default function ChatPage() {
       textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
     }
   }, [input]);
-
-  /** 终止当前正在进行的 SSE 流（#35 切换会话时使用）。 */
-  const abortCurrentStream = () => {
-    if (abortRef.current) {
-      abortRef.current.abort();
-      abortRef.current = null;
-    }
-  };
-
-  /** 删除一个会话：若删的是激活会话则切到下一条或置空。 */
-  const handleDeleteConversation = async (id: number) => {
-    if (sidebarBusy) return;
-    if (!confirm('确认删除该会话及其全部消息？')) return;
-    setSidebarBusy(true);
-    try {
-      await conversationApi.remove(id);
-      const remaining = conversations.filter((c) => c.id !== id);
-      setConversations(remaining);
-      if (activeConvId === id) {
-        // 删完后空了不再自动建会话（会话只能从首页小说卡片创建）
-        setActiveConvId(remaining.length > 0 ? remaining[0].id : null);
-        setMessages([]);
-        setThinkingOpen({});
-      }
-    } catch (err) {
-      console.error('删除会话失败:', err);
-      setError('删除会话失败，请稍后重试');
-    } finally {
-      setSidebarBusy(false);
-    }
-  };
-
-  /** 切换会话：取消 in-flight 流 → 清空消息 → 触发 effect 拉取新历史。 */
-  const handleSwitchConversation = (id: number) => {
-    if (sidebarBusy) return;
-    if (id === activeConvId) return;
-    abortCurrentStream();
-    setIsLoading(false);
-    setActiveConvId(id);
-    setMessages([]);
-    setThinkingOpen({});
-    setError(null);
-  };
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
@@ -396,53 +269,14 @@ export default function ChatPage() {
 
   return (
     <div className="chat-layout">
-      {/* 左侧会话栏（#35） */}
-      <aside className="conversation-sidebar" data-testid="conversation-sidebar">
-        <div className="conversation-sidebar-header">
-          <span className="conversation-sidebar-title">会话</span>
-        </div>
-        <ul className="conversation-list" data-testid="conversation-list">
-          {conversations.length === 0 && (
-            <li className="conversation-empty">暂无会话</li>
-          )}
-          {conversations.map((c) => {
-            const isActive = c.id === activeConvId;
-            return (
-              <li
-                key={c.id}
-                className={`conversation-item ${isActive ? 'active' : ''}`}
-                data-testid={`conversation-item-${c.id}`}
-                data-active={isActive ? 'true' : 'false'}
-              >
-                <button
-                  type="button"
-                  className="conversation-item-main"
-                  onClick={() => handleSwitchConversation(c.id)}
-                  disabled={sidebarBusy}
-                  title={c.title ?? '新对话'}
-                >
-                  <span className="conversation-item-title">
-                    {c.title ?? '新对话'}
-                  </span>
-                  <span className="conversation-item-meta">
-                    {c.message_count} 条消息
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="conversation-item-delete"
-                  data-testid={`conversation-delete-${c.id}`}
-                  onClick={() => handleDeleteConversation(c.id)}
-                  disabled={sidebarBusy}
-                  title="删除会话"
-                >
-                  ×
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </aside>
+      {/* 左侧会话栏（#35，#59 抽为子组件） */}
+      <ConversationSidebar
+        conversations={conversations}
+        activeConvId={activeConvId}
+        sidebarBusy={sidebarBusy}
+        onSwitch={handleSwitchConversation}
+        onDelete={handleDeleteConversation}
+      />
 
       {/* 右侧对话主体 */}
       <div className="chat-area">
@@ -486,7 +320,7 @@ export default function ChatPage() {
                 <details
                   className="thinking-section"
                   open={!!thinkingOpen[msg.id]}
-                  onToggle={(e) => setThinkingOpen((prev) => ({ ...prev, [msg.id]: (e.target as HTMLDetailsElement).open }))}
+                  onToggle={(e) => handleToggleThinking(msg.id, (e.target as HTMLDetailsElement).open)}
                 >
                   <summary className="thinking-summary">思考过程</summary>
                   <div className="thinking-content">{msg.thinking}</div>
