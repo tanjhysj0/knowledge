@@ -196,9 +196,15 @@ def get_llm_provider(request: Optional[Request] = None) -> LLMProvider:
             request.headers.get(mock_llm.E2E_MOCK_LLM_ERROR_HEADER, "").lower()
             == "true"
         )
+        # #66：E2E 用请求头控制 Evidence Agent 判定（insufficient → 证据不足）。
+        judge_sufficient = (
+            request.headers.get(mock_llm.E2E_MOCK_JUDGE_HEADER, "").lower()
+            != "insufficient"
+        )
         return mock_llm.MockLLMProvider(
             include_thinking=include_thinking,
             fail_with_error=fail_with_error,
+            judge_sufficient=judge_sufficient,
         )
     provider_type = get_runtime_model().provider_type.lower()
     if provider_type == "anthropic":

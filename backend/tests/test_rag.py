@@ -186,6 +186,43 @@ class TestDedupeSources:
         assert RAGService._dedupe_sources(None) == []
 
 
+class TestAretrieve:
+    """``RAGService.aretrieve`` 把 history 透传给混合检索管线（#66）。"""
+
+    @pytest.mark.asyncio
+    async def test_passes_history_to_retrieve_evidence(self):
+        rag = RAGService.__new__(RAGService)
+        rag._vector_store = MagicMock()
+        rag._request = None
+        hit = MagicMock(document_id=1, chunk_index=0, content="c", score=0.5)
+        pack = MagicMock()
+        pack.hits = [hit]
+
+        history = [{"role": "user", "content": "上一轮问题"}]
+        with patch.object(
+            rag, "retrieve_evidence", AsyncMock(return_value=pack)
+        ) as mock_retrieve:
+            results = await rag.aretrieve("Q", [1], top_k=5, history=history)
+
+        mock_retrieve.assert_awaited_once_with("Q", [1], 5, history)
+        assert results[0]["document_id"] == 1
+
+    @pytest.mark.asyncio
+    async def test_history_defaults_to_none(self):
+        rag = RAGService.__new__(RAGService)
+        rag._vector_store = MagicMock()
+        rag._request = None
+        pack = MagicMock()
+        pack.hits = []
+
+        with patch.object(
+            rag, "retrieve_evidence", AsyncMock(return_value=pack)
+        ) as mock_retrieve:
+            await rag.aretrieve("Q", [1])
+
+        mock_retrieve.assert_awaited_once_with("Q", [1], 5, None)
+
+
 class TestRAGServiceAnswer:
     """``RAGService.answer`` 检索命中/未命中的 prompt 行为。"""
 
@@ -200,7 +237,7 @@ class TestRAGServiceAnswer:
         fake_llm.chat = AsyncMock(return_value="the answer")
 
         with patch("app.services.rag.get_embedding_provider") as mock_gs, patch.object(
-            rag, "_asearch_chunks", AsyncMock(return_value=hits)
+            rag, "aretrieve", AsyncMock(return_value=hits)
         ), patch("app.services.rag.get_llm_provider", return_value=fake_llm):
             result = await rag.answer(
                 question="What is X?",
@@ -230,7 +267,7 @@ class TestRAGServiceAnswer:
         fake_llm.chat = AsyncMock(return_value="general answer")
 
         with patch("app.services.rag.get_embedding_provider"), patch.object(
-            rag, "_asearch_chunks", AsyncMock(return_value=[])
+            rag, "aretrieve", AsyncMock(return_value=[])
         ), patch("app.services.rag.get_llm_provider", return_value=fake_llm):
             result = await rag.answer(
                 question="Anything?",
@@ -262,7 +299,7 @@ class TestRAGServiceAnswer:
         fake_llm.chat = AsyncMock(return_value="ok")
 
         with patch("app.services.rag.get_embedding_provider"), patch.object(
-            rag, "_asearch_chunks", AsyncMock(return_value=hits)
+            rag, "aretrieve", AsyncMock(return_value=hits)
         ), patch("app.services.rag.get_llm_provider", return_value=fake_llm):
             result = await rag.answer(question="Q", document_ids=[1, 2], top_k=5)
 
@@ -290,7 +327,7 @@ class TestRAGServiceAnswerStream:
         fake_llm.stream_chat = fake_stream_chat
 
         with patch("app.services.rag.get_embedding_provider"), patch.object(
-            rag, "_asearch_chunks", AsyncMock(return_value=hits)
+            rag, "aretrieve", AsyncMock(return_value=hits)
         ), patch("app.services.rag.get_llm_provider", return_value=fake_llm):
             events = []
             async for event in rag.answer_stream(
@@ -324,7 +361,7 @@ class TestRAGServiceAnswerStream:
         fake_llm.stream_chat = fake_stream_chat
 
         with patch("app.services.rag.get_embedding_provider"), patch.object(
-            rag, "_asearch_chunks", AsyncMock(return_value=[])
+            rag, "aretrieve", AsyncMock(return_value=[])
         ), patch("app.services.rag.get_llm_provider", return_value=fake_llm):
             events = []
             async for event in rag.answer_stream(

@@ -42,6 +42,21 @@ class Settings(BaseSettings):
     chunk_size: int = 500
     chunk_overlap: int = 50
 
+    # Hybrid retrieval（#66）：五路检索策略开关（默认全开；entity/event 索引
+    # 不可用时检索器自动降级为空结果，不阻断整体问答）。
+    retrieval_dense_enabled: bool = True
+    retrieval_bm25_enabled: bool = True
+    retrieval_entity_enabled: bool = True
+    retrieval_event_enabled: bool = True
+    retrieval_chapter_enabled: bool = True
+    # 各路检索 top_k；融合后取 top-N 进入证据包。
+    retrieval_top_k: int = 5
+    retrieval_fused_top_n: int = 5
+    # 证据循环补充检索轮次上限（PRD 默认 2）。
+    evidence_max_iterations: int = 2
+    # 证据循环补检的每轮命中增量（每次补充检索合并进证据包的最大条数）。
+    evidence_refine_top_n: int = 5
+
     @property
     def database_url(self) -> str:
         return f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"

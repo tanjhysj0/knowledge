@@ -19,20 +19,26 @@ RETRIEVAL_SCORE_THRESHOLD = 0.5
 class RAGService:
     """Service for RAG-based question answering.
 
-    检索链路（#32 真打开）：
+    #66：检索链路由单路 dense 升级为混合检索管线
+    （Query Planner → Dense/BM25/Entity/Event/Chapter → RRF Fusion →
+    Reranker → Evidence Agent 证据循环），见
+    :class:`app.services.retrieval.pipeline.HybridRetrievalPipeline`。
 
-    1. :meth:`_search_chunks` 把 ``question`` 送 embedding provider 取 query 向量
-    2. 调 :meth:`VectorStoreService.search` 在 Milvus 中按 cosine 相似度召回 top-k
-       （pymilvus 对 COSINE metric 的 ``distance`` 字段即相似度，越大越相关）
-    3. 用 :data:`RETRIEVAL_SCORE_THRESHOLD` 过滤掉相似度过低的"假命中"
-    4. 命中非空时拼 :meth:`_build_rag_prompt`；未命中或检索异常时回退
-       :meth:`_build_external_prompt`（与历史行为兼容）
-    5. ``sources`` 字段按 ``document_id`` 去重，仅返回 ``["doc_<id>", ...]``
+    公开契约保持兼容：``aretrieve`` / ``answer`` / ``answer_stream`` 签名
+    与返回结构不变；``sources`` 仍为 ``["doc_<id>", ...]``。
+    ``used_external`` 语义改为"证据包完全为空"。
+
+    ``_search_chunks`` / ``_asearch_chunks`` 保留（dense 单路检索，
+    :class:`app.services.retrieval.dense.DenseRetriever` 为其迁移副本），
+    供存量调用与单测使用。
     """
 
     def __init__(self, request: Optional[Request] = None):
         self._vector_store = VectorStoreService()
         self._request = request
+        # #66：最近一次 :meth:`retrieve_evidence` 的证据包（chat service 发
+        # SSE ``evidence`` 事件用；RAGService 每次请求新建，无跨请求污染）。
+        self._last_evidence_pack = None
 
     def _llm(self):
         """Resolve the current LLM provider on each call so settings changes take effect.
@@ -149,18 +155,63 @@ Please answer this question based on your general knowledge."""
             sources.append(f"doc_{doc_id}")
         return sources
 
+    async def retrieve_evidence(
+        self,
+        question: str,
+        document_ids: List[int],
+        top_k: int = 5,
+        history: Optional[List[Dict[str, str]]] = None,
+    ):
+        """#66：完整证据管线入口（规划 → 混合检索 → 融合 → 重排 → 证据循环）。
+
+        返回 :class:`~app.services.retrieval.evidence.EvidencePack`；同时
+        缓存在 ``self`` 上供 :meth:`last_evidence_pack` 读取（SSE evidence
+        事件）。
+        """
+        from app.services.retrieval.evidence import EvidencePack
+        from app.services.retrieval.pipeline import HybridRetrievalPipeline
+
+        pipeline = HybridRetrievalPipeline(
+            request=self._request,
+            top_k=top_k,
+        )
+        pack: EvidencePack = await pipeline.retrieve(
+            question, document_ids or [], history
+        )
+        self._last_evidence_pack = pack
+        return pack
+
+    def last_evidence_pack(self):
+        """最近一次 :meth:`retrieve_evidence` 的证据包（可能为 ``None``）。"""
+        return self._last_evidence_pack
+
+    @staticmethod
+    def _hit_to_legacy_dict(hit) -> Dict[str, Any]:
+        """EvidencePack 命中 → 旧检索结果 dict（``distance`` 沿用相似度语义）。"""
+        return {
+            "document_id": hit.document_id,
+            "chunk_index": hit.chunk_index,
+            "content": hit.content,
+            "distance": hit.score,
+        }
+
     async def aretrieve(
         self,
         question: str,
         document_ids: List[int],
         top_k: int = 5,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> List[Dict[str, Any]]:
-        """公开的检索入口：返回原始命中 dict 列表（与 :meth:`_asearch_chunks` 等价）。
+        """公开的检索入口：跑混合检索管线，返回旧格式命中 dict 列表。
 
         供 :mod:`app.services.chat` 在拼装 prompt 前调用，以便 SSE ``done``
         事件能携带 sources；不在本方法内做 prompt 构造 / LLM 调用。
+
+        ``history`` 透传给 Query Planner 做多轮指代消解（当前问题之前
+        的对话历史）。
         """
-        return await self._asearch_chunks(question, document_ids, top_k)
+        pack = await self.retrieve_evidence(question, document_ids, top_k, history)
+        return [self._hit_to_legacy_dict(hit) for hit in pack.hits]
 
     async def answer(
         self,
@@ -169,7 +220,7 @@ Please answer this question based on your general knowledge."""
         top_k: int = 5,
     ) -> Dict[str, Any]:
         """Answer a question using RAG. Returns dict with 'answer', 'sources', 'used_external'."""
-        search_results = await self._asearch_chunks(question, document_ids or [], top_k)
+        search_results = await self.aretrieve(question, document_ids or [], top_k)
         used_external = not search_results
 
         prompt = (
@@ -193,7 +244,7 @@ Please answer this question based on your general knowledge."""
         top_k: int = 5,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Answer a question with streaming. Yields ``{chunk, done, sources, error}``."""
-        search_results = await self._asearch_chunks(question, document_ids or [], top_k)
+        search_results = await self.aretrieve(question, document_ids or [], top_k)
         used_external = not search_results
 
         prompt = (

@@ -15,5 +15,7 @@ sse-starlette==2.0.0
 sentence-transformers>=3.0.0  # 本地 bge-m3 embedding provider（#30）
 torch>=2.0.0  # sentence-transformers 推理后端（#30）
 numpy>=1.24.0  # sentence-transformers 依赖（#30）
+langgraph>=1.0.0  # #66：Evidence Agent 证据循环状态机
+jieba>=0.42.1  # #66：BM25 中文分词与实体抽取（实体/事件索引）
 pytest==8.2.0
 pytest-cov==4.1.0

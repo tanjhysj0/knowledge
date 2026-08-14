@@ -190,7 +190,7 @@ class TestAsk:
 
         assert result == {"answer": "Hello back", "sources": ["doc_1"]}
         mock_instance.aretrieve.assert_called_once_with(
-            question="Hi", document_ids=[1], top_k=5
+            question="Hi", document_ids=[1], top_k=5, history=[]
         )
         # 命中时使用 RAG prompt
         mock_instance._build_rag_prompt.assert_called_once()
@@ -328,7 +328,7 @@ class TestReadyDocumentFilter:
 
         # 仅 ready 的 id=2 参与检索
         mock_instance.aretrieve.assert_called_once_with(
-            question="Q", document_ids=[2], top_k=5
+            question="Q", document_ids=[2], top_k=5, history=[]
         )
         # 落库的 user 消息仍存原始 ids
         users = [obj for obj in db.added if obj.role == "user"]
@@ -359,7 +359,7 @@ class TestReadyDocumentFilter:
             )
 
         mock_instance.aretrieve.assert_called_once_with(
-            question="Q", document_ids=[], top_k=5
+            question="Q", document_ids=[], top_k=5, history=[]
         )
         mock_instance._build_external_prompt.assert_called_once()
         mock_instance._build_rag_prompt.assert_not_called()
@@ -388,7 +388,7 @@ class TestReadyDocumentFilter:
             )
 
         mock_instance.aretrieve.assert_called_once_with(
-            question="Q", document_ids=[6], top_k=5
+            question="Q", document_ids=[6], top_k=5, history=[]
         )
 
 
@@ -433,7 +433,71 @@ class TestStreamAnswerHappyPath:
 
         done_events = [e for e in events if e[0] == "done"]
         assert len(done_events) == 1
-        assert done_events[0][1] == {"sources": []}
+        # #66：done 事件扩展结构化 evidence 字段（向下兼容：sources 仍是数组）。
+        assert done_events[0][1] == {"sources": [], "evidence": []}
+
+    @pytest.mark.asyncio
+    async def test_emits_evidence_event_when_pack_present(self):
+        """#66：证据包存在时先发 evidence 事件，done 带结构化证据。"""
+        from app.services.retrieval import RetrievalHit
+        from app.services.retrieval.evidence import EvidencePack
+
+        db = _FakeAsyncSession(conversations=[SimpleNamespace(id=21, message_count=0)])
+        pack = EvidencePack(
+            hits=[
+                RetrievalHit(
+                    document_id=7, chunk_index=2, content="c",
+                    score=0.8, strategy="dense",
+                )
+            ],
+            sufficient=True, iterations=0, note="",
+        )
+
+        async def fake_stream(messages):
+            yield "Hi"
+
+        with patch("app.services.rag.RAGService._llm") as mock_llm, patch.object(
+            RAGService, "last_evidence_pack", return_value=pack, create=True
+        ):
+            mock_llm.return_value.stream_chat = fake_stream
+            events = await _collect_sse_dicts(
+                stream_answer(question="Hi", document_ids=[], conversation_id=21, db=db)
+            )
+
+        evidence_events = [e for e in events if e[0] == "evidence"]
+        assert len(evidence_events) == 1
+        data = evidence_events[0][1]
+        assert data["sufficient"] is True
+        assert data["iterations"] == 0
+        assert data["hits"][0]["document_id"] == 7
+
+        done = [e for e in events if e[0] == "done"][0][1]
+        assert done["evidence"] == [
+            {
+                "document_id": 7, "chunk_index": 2, "score": 0.8,
+                "strategy": "dense", "chapter": None,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_no_evidence_event_without_pack(self):
+        """#66：证据包缺失（检索异常/空证据）时不发 evidence 事件。"""
+        db = _FakeAsyncSession(conversations=[SimpleNamespace(id=21, message_count=0)])
+
+        async def fake_stream(messages):
+            yield "Hi"
+
+        with patch("app.services.rag.RAGService._llm") as mock_llm, patch.object(
+            RAGService, "last_evidence_pack", return_value=None, create=True
+        ):
+            mock_llm.return_value.stream_chat = fake_stream
+            events = await _collect_sse_dicts(
+                stream_answer(question="Hi", document_ids=[], conversation_id=21, db=db)
+            )
+
+        assert [e for e in events if e[0] == "evidence"] == []
+        done = [e for e in events if e[0] == "done"][0][1]
+        assert done["evidence"] == []
 
     @pytest.mark.asyncio
     async def test_thinking_and_answer_segments_split(self):

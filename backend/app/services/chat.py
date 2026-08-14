@@ -57,6 +57,29 @@ async def _ensure_conversation(db: AsyncSession, conversation_id: int) -> None:
     await conversation_service.get_conversation(db, conversation_id)
 
 
+def _is_evidence_pack(value) -> bool:
+    """#66：value 是否为真实 EvidencePack（mock 场景下 MagicMock 应被排除）。"""
+    from app.services.retrieval.evidence import EvidencePack
+
+    return isinstance(value, EvidencePack)
+
+
+def _evidence_detail(evidence_pack) -> List[Dict]:
+    """#66：done 事件的结构化证据（doc_id/chapter/score/strategy）。"""
+    if not _is_evidence_pack(evidence_pack):
+        return []
+    return [
+        {
+            "document_id": hit.document_id,
+            "chunk_index": hit.chunk_index,
+            "score": hit.score,
+            "strategy": hit.strategy,
+            "chapter": hit.chapter,
+        }
+        for hit in evidence_pack.hits
+    ]
+
+
 async def ask(
     question: str,
     document_ids: List[int],
@@ -71,6 +94,17 @@ async def ask(
     # #36：会话必须存在；不存在则 Pydantic 业务层拑 404
     await _ensure_conversation(db, conversation_id)
 
+    # #66：取当前问题之前的对话历史，透传给 Query Planner 做多轮指代消解。
+    history_result = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.conversation_id == conversation_id)
+        .order_by(ChatMessage.created_at.asc())
+    )
+    history = [
+        {"role": msg.role, "content": msg.content}
+        for msg in history_result.scalars().all()
+    ]
+
     rag_service = RAGService(request=request)
     # 先检索：拿 sources 与 prompt 构造依据（#32 + #33）；
     # #63：未 ready 的小说不参与检索。
@@ -78,6 +112,7 @@ async def ask(
         question=question,
         document_ids=await _filter_ready_document_ids(db, document_ids),
         top_k=5,
+        history=history,
     )
     sources = rag_service._dedupe_sources(search_results)
     used_external = not search_results
@@ -161,10 +196,15 @@ async def stream_answer(
         rag_service = RAGService(request=request)
         # 先检索拿 sources + prompt 构造依据（#32 + #33）；
         # #63：未 ready 的小说不参与检索。
+        # #66：aretrieve 内部跑混合检索管线（planner → 五路 → fusion →
+        # rerank → 证据循环），契约不变。
         search_results = await rag_service.aretrieve(
             question=question,
             document_ids=await _filter_ready_document_ids(db, document_ids),
             top_k=5,
+            # #66：当前问题之前的历史（context_messages 末尾刚 append 了
+            # 当前问题，切掉后传给 planner 做多轮指代消解）。
+            history=context_messages[:-1],
         )
         sources = rag_service._dedupe_sources(search_results)
         used_external = not search_results
@@ -174,6 +214,14 @@ async def stream_answer(
         else:
             prompt = rag_service._build_rag_prompt(question, search_results)
         messages = context_messages + [{"role": "user", "content": prompt}]
+
+        # #66：可选 evidence 事件——证据包摘要（前端可后续消费，忽略不影响）。
+        evidence_pack = rag_service.last_evidence_pack()
+        if _is_evidence_pack(evidence_pack):
+            yield {
+                "event": "evidence",
+                "data": json.dumps(evidence_pack.to_dict(), ensure_ascii=False),
+            }
 
         async for chunk_data in rag_service._llm().stream_chat(messages=messages):
             for kind, segment in splitter.feed(chunk_data):
@@ -220,7 +268,14 @@ async def stream_answer(
 
         yield {
             "event": "done",
-            "data": json.dumps({"sources": sources}),
+            "data": json.dumps(
+                {
+                    "sources": sources,
+                    # #66：done 事件扩展结构化证据（doc_id/chapter/score/strategy），
+                    # 向下兼容：sources 仍是字符串数组。
+                    "evidence": _evidence_detail(evidence_pack),
+                }
+            ),
         }
     except Exception as exc:  # noqa: BLE001 — translate any failure to a single SSE error event
         await db.rollback()

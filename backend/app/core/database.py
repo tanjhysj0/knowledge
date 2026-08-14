@@ -49,6 +49,14 @@ async def get_db() -> AsyncSession:
 async def init_db():
     try:
         engine = get_engine()
+        # #66：混合检索辅助索引表随 create_all 建表（import 即注册到 metadata）。
+        from app.models.retrieval_index import (  # noqa: F401
+            Bm25Chunk,
+            ChapterAnchor,
+            EntityAnchor,
+            EventAnchor,
+        )
+
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             # #70：旧 settings 单行表已迁移入 llm_models（#68），启动时删除

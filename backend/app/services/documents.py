@@ -208,12 +208,23 @@ def _delete_vectors_quietly(document_id: int) -> None:
         logger.warning("vector cleanup for document %s failed: %s", document_id, exc)
 
 
+async def _clear_metadata_indexes_quietly(db: AsyncSession, document_id: int) -> None:
+    """#66：尽力清理小说的辅助索引（删除/重试路径，失败不阻塞主流程）。"""
+    try:
+        from app.services.retrieval.indexing import clear_metadata_indexes
+
+        await clear_metadata_indexes(db, document_id)
+    except Exception as exc:  # noqa: BLE001 — 清理失败可容忍
+        logger.warning("metadata index cleanup for document %s failed: %s", document_id, exc)
+
+
 async def _mark_failed(db: AsyncSession, document_id: int, error: Exception) -> None:
     """把小说标记为 ``failed`` 并记录错误信息；已被删除则忽略任务结果。
 
     失败可能发生在向量写入中途：先尽力清理残留向量，避免半成品参与检索。
     """
     _delete_vectors_quietly(document_id)
+    await _clear_metadata_indexes_quietly(db, document_id)
     document = await _load_document(db, document_id)
     if document is None:
         return
@@ -306,6 +317,17 @@ async def _process_document_index(db: AsyncSession, document_id: int) -> None:
 
         await _insert_vectors(document_id, chunks, embeddings)
         await _update_progress(db, document, progress=PROGRESS_INDEXED)
+
+        # #66：混合检索辅助索引（BM25/章节/实体/事件）。构建失败不阻断
+        # 上传（PRD 兼容性要求）：仅记录，事后可用重建脚本补齐。
+        try:
+            from app.services.retrieval.indexing import build_metadata_indexes
+
+            await build_metadata_indexes(db, document_id, text_content, chunks)
+        except Exception as exc:  # noqa: BLE001 — 辅助索引失败不阻断 ready
+            logger.warning(
+                "metadata indexes for document %s failed: %s", document_id, exc
+            )
     except Exception as exc:  # noqa: BLE001 — 任何阶段失败都转为 failed 状态
         await _mark_failed(db, document_id, exc)
         return
@@ -352,6 +374,8 @@ async def requeue_document_index(
 
     # 重试前清除失败残留：半写入的向量条目一并清理，避免重复数据（#65）。
     _delete_vectors_quietly(document_id)
+    # #66：辅助索引（BM25/章节/实体/事件）随失败残留一并清理，重建时重写。
+    await _clear_metadata_indexes_quietly(db, document_id)
 
     document.status = "pending"
     document.progress = 0
@@ -383,6 +407,7 @@ async def recover_stale_processing_documents(db: AsyncSession) -> List[int]:
         await db.commit()
         for doc_id in stale_ids:
             _delete_vectors_quietly(doc_id)
+            await _clear_metadata_indexes_quietly(db, doc_id)
 
     pending_result = await db.execute(
         select(Document.id).where(Document.status == "pending")
@@ -520,6 +545,14 @@ async def delete_document(
     try:
         vector_store = VectorStoreService()
         vector_store.delete_by_document_id(document_id)
+    except Exception:
+        pass
+
+    # #66：辅助索引（BM25/章节/实体/事件）随删除清理；失败静默忽略。
+    try:
+        from app.services.retrieval.indexing import clear_metadata_indexes
+
+        await clear_metadata_indexes(db, document_id)
     except Exception:
         pass
 
