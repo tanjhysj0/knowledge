@@ -1,9 +1,9 @@
 """#45 聊天页 preflight 用的 LLM 可用性子路由。"""
 from fastapi import APIRouter
 
-from app.core.config import get_settings
 from app.models.schemas import LLMStatusResponse
 from app.services.llm import is_llm_configured
+from app.services.runtime_config import get_runtime_model
 
 
 router = APIRouter()
@@ -15,15 +15,15 @@ router = APIRouter()
     tags=["llm"],
 )
 def get_llm_status() -> LLMStatusResponse:
-    """返回当前 LLM Provider 是否已就绪。
+    """返回当前默认模型是否已就绪。
 
-    与 ``GET /api/settings`` 共享同一事实源：``is_llm_configured()`` 只读
-    ``settings.llm_provider`` + 对应 provider 的 ``api_key`` / ``model``。
+    #69：与 provider 构造共用运行时默认模型单例（``llm_models`` 默认行
+    镜像）；无默认模型时 ``configured=false``。
     """
-    settings = get_settings()
+    runtime = get_runtime_model()
     configured, reason = is_llm_configured()
     return LLMStatusResponse(
-        provider=settings.llm_provider,
+        provider=runtime.provider_type,
         configured=configured,
         reason=reason,
     )

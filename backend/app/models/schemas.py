@@ -183,6 +183,25 @@ class LLMModelResponse(BaseModel):
     updated_at: datetime
 
 
+# ----------------- 模型列表拉取（#69） -----------------
+
+class ModelListFetchRequest(BaseModel):
+    """``POST /api/models/fetch`` 请求体：后端代理拉取 provider 模型列表。
+
+    ``api_key`` 仅透传给上游 provider，不落库、不在任何响应中回传。
+    """
+
+    provider_type: Literal["openai", "anthropic"]
+    base_url: str = Field(default="", max_length=512)
+    api_key: str = Field(default="", max_length=512)
+
+
+class ModelListResponse(BaseModel):
+    """``POST /api/models/fetch`` 响应：provider 返回的模型名列表。"""
+
+    models: list[str]
+
+
 # #45：聊天页 preflight 用的 LLM 可用性状态。
 class LLMStatusResponse(BaseModel):
     """``GET /api/llm/status`` 的响应载荷。``reason`` 在 ``configured=True`` 时为空串。"""

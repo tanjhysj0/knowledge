@@ -50,9 +50,10 @@ async def _recover_indexing() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    # #67/#68：DB 是 LLM 配置唯一事实源；先执行旧 settings 单行 →
-    # llm_models 的一次性迁移（#68），再把模型列表恢复到内存单例；
-    # 失败不影响启动，但也不回退到环境变量：显式置为未配置。
+    # #67/#68/#69：DB 是 LLM 配置唯一事实源；先执行旧 settings 单行 →
+    # llm_models 的一次性迁移（#68），再把默认模型加载进运行时单例（#69）
+    # 供 provider 构造与 preflight 读取；失败不影响启动，但也不回退到环境
+    # 变量：显式置为未配置。
     try:
         session_maker = get_session_maker()
         async with session_maker() as db:

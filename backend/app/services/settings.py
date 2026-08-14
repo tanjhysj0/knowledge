@@ -25,6 +25,7 @@ from app.models.schemas import (
 from app.models.setting import AppSetting
 from app.services import models as models_service
 from app.services.llm import reset_providers
+from app.services.runtime_config import get_runtime_model
 
 
 # settings 表固定单行 id（单例行语义，仅迁移期读取）。
@@ -101,28 +102,33 @@ async def migrate_legacy_settings(db: AsyncSession) -> None:
 
 
 async def load_llm_settings_from_db(db: AsyncSession) -> None:
-    """启动时从 ``llm_models`` 恢复 LLM 配置到内存单例（#68）。
+    """启动时从 ``llm_models`` 恢复 LLM 配置（#68/#69）。
 
-    列表非空 → 各记录写回对应 provider 字段，默认记录（无默认回退第一条）
-    决定 ``llm_provider``；列表为空 → 清空内存单例的 LLM 字段（未配置）。
-    环境变量/``.env`` 中的 LLM key 不再作为运行时配置来源。
+    列表非空 → 各记录写回对应 provider 字段（旧内存镜像，供兼容读取），
+    默认记录（无默认回退第一条）决定 ``llm_provider``；列表为空 → 清空内存
+    单例的 LLM 字段（未配置）。同时把默认行镜像进运行时单例（#69），
+    provider 构造与 preflight 均读运行时单例。环境变量/``.env`` 中的 LLM
+    key 不再作为运行时配置来源。
     """
     rows = await models_service.list_model_rows(db)
     if not rows:
         reset_llm_memory()
-        return
-    _apply_models_to_memory(rows)
+    else:
+        _apply_models_to_memory(rows)
+    await models_service.sync_runtime_model_from_db(db, rows=rows)
 
 
 def get_llm_config() -> LLMSettings:
-    """读取内存单例中当前 Provider 配置，并隐藏 API Key。"""
-    settings = get_settings()
-    fields = _provider_fields(settings)
+    """读取运行时默认模型配置，并隐藏 API Key（#69）。
+
+    与 provider 构造 / preflight 共用运行时单例，不再回读 Settings 字段。
+    """
+    runtime = get_runtime_model()
     return LLMSettings(
-        provider=settings.llm_provider,
-        api_key_masked=models_service.mask_api_key(getattr(settings, fields.api_key)),
-        base_url=getattr(settings, fields.base_url),
-        model=getattr(settings, fields.model),
+        provider=runtime.provider_type,
+        api_key_masked=models_service.mask_api_key(runtime.api_key),
+        base_url=runtime.base_url,
+        model=runtime.model_name,
     )
 
 
@@ -242,7 +248,3 @@ def reset_llm_memory() -> None:
     settings.llm_provider = "openai"
     for field in _LLM_FIELDS[1:]:
         setattr(settings, field, "")
-
-
-def _provider_fields(settings: Settings) -> _ProviderFields:
-    return _PROVIDER_FIELDS.get(settings.llm_provider, _PROVIDER_FIELDS["openai"])

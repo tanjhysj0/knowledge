@@ -12,6 +12,11 @@ import type {
   UploadProgress,
   SettingsResponse,
   SettingsUpdate,
+  LLMModel,
+  LLMModelCreate,
+  LLMModelUpdate,
+  ModelListFetchRequest,
+  ModelListResponse,
 } from '../types';
 
 const api = axios.create({
@@ -186,6 +191,39 @@ export const settingsApi = {
 
   update: async (settings: SettingsUpdate): Promise<SettingsResponse> => {
     const response = await api.put<SettingsResponse>('/settings', settings);
+    return response.data;
+  },
+};
+
+// #68/#69：模型列表 CRUD + 模型列表拉取代理。
+export const modelsApi = {
+  list: async (): Promise<LLMModel[]> => {
+    const response = await api.get<LLMModel[]>('/models');
+    return response.data;
+  },
+
+  create: async (payload: LLMModelCreate): Promise<LLMModel> => {
+    const response = await api.post<LLMModel>('/models', payload);
+    return response.data;
+  },
+
+  update: async (id: number, payload: LLMModelUpdate): Promise<LLMModel> => {
+    const response = await api.put<LLMModel>(`/models/${id}`, payload);
+    return response.data;
+  },
+
+  remove: async (id: number): Promise<void> => {
+    await api.delete(`/models/${id}`);
+  },
+
+  setDefault: async (id: number): Promise<LLMModel> => {
+    const response = await api.put<LLMModel>(`/models/${id}/default`);
+    return response.data;
+  },
+
+  // #69：给定接口类型 + base_url + api_key，后端代理拉取模型名列表。
+  fetchList: async (payload: ModelListFetchRequest): Promise<ModelListResponse> => {
+    const response = await api.post<ModelListResponse>('/models/fetch', payload);
     return response.data;
   },
 };

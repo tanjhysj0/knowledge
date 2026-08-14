@@ -269,39 +269,50 @@ class TestAnthropicProvider:
 
 
 class TestLLMProviderFactory:
-    """Tests for LLM provider factory function."""
+    """Tests for LLM provider factory function.
 
-    def test_get_llm_provider_returns_openai_by_default(self):
+    #69：provider 选择改读运行时默认模型单例，测试 patch
+    ``app.services.llm.get_runtime_model`` 注入假运行时配置。
+    """
+
+    @staticmethod
+    def _patch_runtime(monkeypatch, provider_type: str):
+        from app.services.runtime_config import RuntimeModelConfig
+
+        monkeypatch.setattr(
+            "app.services.llm.get_runtime_model",
+            lambda: RuntimeModelConfig(provider_type=provider_type),
+        )
+
+    def test_get_llm_provider_returns_openai_by_default(self, monkeypatch):
         """Test that get_llm_provider returns OpenAI by default."""
-        with patch("app.services.llm.settings") as mock_settings:
-            mock_settings.llm_provider = "openai"
-            with patch("app.services.llm.AsyncOpenAI"):
-                provider = get_llm_provider()
-                assert isinstance(provider, OpenAIProvider)
+        self._patch_runtime(monkeypatch, "openai")
+        with patch("app.services.llm.AsyncOpenAI"):
+            provider = get_llm_provider()
+            assert isinstance(provider, OpenAIProvider)
 
-    def test_get_llm_provider_returns_openai_for_openai_setting(self):
+    def test_get_llm_provider_returns_openai_for_openai_setting(self, monkeypatch):
         """Test that get_llm_provider returns OpenAI for 'openai' setting."""
-        with patch("app.services.llm.settings") as mock_settings:
-            mock_settings.llm_provider = "openai"
-            with patch("app.services.llm.AsyncOpenAI"):
-                provider = get_llm_provider()
-                assert isinstance(provider, OpenAIProvider)
+        self._patch_runtime(monkeypatch, "openai")
+        with patch("app.services.llm.AsyncOpenAI"):
+            provider = get_llm_provider()
+            assert isinstance(provider, OpenAIProvider)
 
-    def test_get_llm_provider_returns_anthropic_for_anthropic_setting(self):
+    def test_get_llm_provider_returns_anthropic_for_anthropic_setting(
+        self, monkeypatch
+    ):
         """Test that get_llm_provider returns Anthropic for 'anthropic' setting."""
-        with patch("app.services.llm.settings") as mock_settings:
-            mock_settings.llm_provider = "anthropic"
-            with patch("app.services.llm.AsyncAnthropic"):
-                provider = get_llm_provider()
-                assert isinstance(provider, AnthropicProvider)
+        self._patch_runtime(monkeypatch, "anthropic")
+        with patch("app.services.llm.AsyncAnthropic"):
+            provider = get_llm_provider()
+            assert isinstance(provider, AnthropicProvider)
 
-    def test_get_llm_provider_case_insensitive(self):
+    def test_get_llm_provider_case_insensitive(self, monkeypatch):
         """Test that get_llm_provider is case insensitive."""
-        with patch("app.services.llm.settings") as mock_settings:
-            mock_settings.llm_provider = "ANTHROPIC"
-            with patch("app.services.llm.AsyncAnthropic"):
-                provider = get_llm_provider()
-                assert isinstance(provider, AnthropicProvider)
+        self._patch_runtime(monkeypatch, "ANTHROPIC")
+        with patch("app.services.llm.AsyncAnthropic"):
+            provider = get_llm_provider()
+            assert isinstance(provider, AnthropicProvider)
 
 
 class TestResetProviders:
@@ -340,80 +351,76 @@ class TestResetProviders:
 
 
 class TestIsLLMConfigured:
-    """Tests for is_llm_configured() — #45 preflight availability check."""
+    """Tests for is_llm_configured() — #45 preflight availability check.
 
-    def _patch_settings(self, monkeypatch_target, **fields):
-        """Patch ``get_settings`` inside ``app.services.llm`` with a Settings instance."""
-        from app.core.config import Settings
+    #69：读取源切换为运行时默认模型单例，测试改为 patch
+    ``app.services.llm.get_runtime_model`` 注入假运行时配置。
+    """
 
-        defaults = dict(
-            llm_provider="openai",
-            openai_api_key="sk-valid-key",
-            openai_model="gpt-4o-mini",
-            anthropic_api_key="sk-ant-valid",
-            anthropic_model="claude-3-5-sonnet",
-        )
-        defaults.update(fields)
-        instance = Settings(**defaults)
-        monkeypatch_target.setattr(
-            "app.services.llm.get_settings", lambda: instance
+    def _patch_runtime(self, monkeypatch, **fields):
+        """Patch ``get_runtime_model`` inside ``app.services.llm``."""
+        from app.services.runtime_config import RuntimeModelConfig
+
+        instance = RuntimeModelConfig(**fields)
+        monkeypatch.setattr(
+            "app.services.llm.get_runtime_model", lambda: instance
         )
         return instance
 
     def test_openai_missing_api_key(self, monkeypatch):
-        self._patch_settings(
-            monkeypatch, llm_provider="openai", openai_api_key="", openai_model="gpt-4o-mini"
+        self._patch_runtime(
+            monkeypatch, provider_type="openai", api_key="", model_name="gpt-4o-mini"
         )
         configured, reason = is_llm_configured()
         assert configured is False
         assert "API Key" in reason or "key" in reason.lower()
 
     def test_openai_whitespace_api_key(self, monkeypatch):
-        self._patch_settings(
-            monkeypatch, llm_provider="openai", openai_api_key="   ", openai_model="gpt-4o-mini"
+        self._patch_runtime(
+            monkeypatch, provider_type="openai", api_key="   ", model_name="gpt-4o-mini"
         )
         configured, reason = is_llm_configured()
         assert configured is False
         assert reason
 
     def test_openai_missing_model(self, monkeypatch):
-        self._patch_settings(
-            monkeypatch, llm_provider="openai", openai_api_key="sk-valid-key", openai_model=""
+        self._patch_runtime(
+            monkeypatch, provider_type="openai", api_key="sk-valid-key", model_name=""
         )
         configured, reason = is_llm_configured()
         assert configured is False
         assert "Model" in reason or "model" in reason.lower()
 
     def test_openai_fully_configured(self, monkeypatch):
-        self._patch_settings(
-            monkeypatch, llm_provider="openai", openai_api_key="sk-valid-key", openai_model="gpt-4o-mini"
+        self._patch_runtime(
+            monkeypatch, provider_type="openai", api_key="sk-valid-key", model_name="gpt-4o-mini"
         )
         configured, reason = is_llm_configured()
         assert configured is True
         assert reason == ""
 
     def test_anthropic_missing_api_key(self, monkeypatch):
-        self._patch_settings(
-            monkeypatch, llm_provider="anthropic", anthropic_api_key="", anthropic_model="claude-3-5-sonnet"
+        self._patch_runtime(
+            monkeypatch, provider_type="anthropic", api_key="", model_name="claude-3-5-sonnet"
         )
         configured, reason = is_llm_configured()
         assert configured is False
         assert "API Key" in reason or "key" in reason.lower()
 
     def test_anthropic_missing_model(self, monkeypatch):
-        self._patch_settings(
-            monkeypatch, llm_provider="anthropic", anthropic_api_key="sk-ant-valid", anthropic_model=""
+        self._patch_runtime(
+            monkeypatch, provider_type="anthropic", api_key="sk-ant-valid", model_name=""
         )
         configured, reason = is_llm_configured()
         assert configured is False
         assert "Model" in reason or "model" in reason.lower()
 
     def test_anthropic_fully_configured(self, monkeypatch):
-        self._patch_settings(
+        self._patch_runtime(
             monkeypatch,
-            llm_provider="anthropic",
-            anthropic_api_key="sk-ant-valid",
-            anthropic_model="claude-3-5-sonnet",
+            provider_type="anthropic",
+            api_key="sk-ant-valid",
+            model_name="claude-3-5-sonnet",
         )
         configured, reason = is_llm_configured()
         assert configured is True
@@ -421,8 +428,8 @@ class TestIsLLMConfigured:
 
     def test_unknown_provider_treated_as_openai(self, monkeypatch):
         """Unknown provider value falls through to the OpenAI branch."""
-        self._patch_settings(
-            monkeypatch, llm_provider="unknown-thing", openai_api_key="", openai_model=""
+        self._patch_runtime(
+            monkeypatch, provider_type="unknown-thing", api_key="", model_name=""
         )
         configured, _ = is_llm_configured()
         assert configured is False

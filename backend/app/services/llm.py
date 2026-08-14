@@ -6,6 +6,7 @@ from starlette.requests import Request
 
 from app.core.config import get_settings
 from app.services import mock_llm
+from app.services.runtime_config import get_runtime_model
 
 settings = get_settings()
 
@@ -45,11 +46,14 @@ class OpenAIProvider:
         if getattr(self, "_initialized", False):
             return
         self._initialized = True
+        # #69：客户端参数读运行时默认模型单例（llm_models 默认行镜像），
+        # 不再读环境变量驱动的 Settings 字段。
+        runtime = get_runtime_model()
         self._client = AsyncOpenAI(
-            api_key=settings.openai_api_key or "sk-dummy-initial-key",
-            base_url=settings.openai_base_url,
+            api_key=runtime.api_key or "sk-dummy-initial-key",
+            base_url=runtime.base_url,
         )
-        self._model = settings.openai_model
+        self._model = runtime.model_name
 
     async def chat(
         self,
@@ -97,11 +101,13 @@ class AnthropicProvider:
         if getattr(self, "_initialized", False):
             return
         self._initialized = True
+        # #69：客户端参数读运行时默认模型单例（llm_models 默认行镜像）。
+        runtime = get_runtime_model()
         self._client = AsyncAnthropic(
-            api_key=settings.anthropic_api_key or "sk-ant-dummy-initial-key",
-            base_url=settings.anthropic_base_url,
+            api_key=runtime.api_key or "sk-ant-dummy-initial-key",
+            base_url=runtime.base_url,
         )
-        self._model = settings.anthropic_model
+        self._model = runtime.model_name
 
     async def chat(
         self,
@@ -197,7 +203,7 @@ def get_llm_provider(request: Optional[Request] = None) -> LLMProvider:
             include_thinking=include_thinking,
             fail_with_error=fail_with_error,
         )
-    provider_type = settings.llm_provider.lower()
+    provider_type = get_runtime_model().provider_type.lower()
     if provider_type == "anthropic":
         return AnthropicProvider()
     return OpenAIProvider()
@@ -209,18 +215,20 @@ def reset_providers():
     AnthropicProvider._instance = None
 
 
-# #45：preflight 阶段检测当前 LLM Provider 是否具备 API Key + Model；
+# #45：preflight 阶段检测当前默认模型是否具备 API Key + Model；
 # 返回 ``(configured, reason)``。``configured=True`` 时 ``reason`` 为空串。
+# #69：读取源切换为运行时默认模型单例（llm_models 默认行镜像），
+# 与 provider 构造共用同一事实源。
 def is_llm_configured() -> tuple[bool, str]:
-    current = get_settings()
-    provider_type = current.llm_provider.lower()
+    runtime = get_runtime_model()
+    provider_type = runtime.provider_type.lower()
     if provider_type == "anthropic":
-        api_key = current.anthropic_api_key
-        model = current.anthropic_model
+        api_key = runtime.api_key
+        model = runtime.model_name
         provider_label = "Anthropic"
     else:  # openai（默认）
-        api_key = current.openai_api_key
-        model = current.openai_model
+        api_key = runtime.api_key
+        model = runtime.model_name
         provider_label = "OpenAI"
 
     if not api_key or not api_key.strip():

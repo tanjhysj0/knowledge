@@ -1,15 +1,27 @@
-"""模型列表应用服务（#68）：``llm_models`` 表的纯数据层 CRUD。
+"""模型列表应用服务（#68/#69）：``llm_models`` 表的 CRUD + 运行时同步。
 
 一个模型一条记录（provider_type / base_url / model_name / api_key /
 is_default）；「有且只有一个默认」由数据库 partial unique index 保证。
-本模块不触碰内存单例与 Provider 构造（运行时管线切换在后续切片），
-只提供模型记录的读写与领域错误。
+#69 起：:func:`sync_runtime_model_from_db` 把默认行镜像进运行时单例
+（provider 构造与 preflight 的读取源），写路径提交成功后调用；
+:func:`fetch_provider_models` 提供模型列表拉取代理（api_key 不落库不回传）。
 """
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+import httpx
 
 from app.models.llm_model import LLMModel
-from app.models.schemas import LLMModelCreate, LLMModelResponse, LLMModelUpdate
+from app.models.schemas import (
+    LLMModelCreate,
+    LLMModelResponse,
+    LLMModelUpdate,
+    ModelListFetchRequest,
+)
+from app.services.runtime_config import (
+    RuntimeModelConfig,
+    reset_runtime_model,
+    set_runtime_model,
+)
 
 
 class ModelServiceError(Exception):
@@ -142,6 +154,73 @@ async def set_default_model(db: AsyncSession, model_id: int) -> LLMModelResponse
 async def _get_model_row(db: AsyncSession, model_id: int) -> LLMModel | None:
     result = await db.execute(select(LLMModel).where(LLMModel.id == model_id))
     return result.scalar_one_or_none()
+
+
+async def get_default_model_row(db: AsyncSession) -> LLMModel | None:
+    """取当前默认模型行（无默认时回退第一条，无记录返回 None）。
+
+    与启动加载的语义一致：默认排最前。
+    """
+    rows = await list_model_rows(db)
+    if not rows:
+        return None
+    return next((row for row in rows if row.is_default), rows[0])
+
+
+async def sync_runtime_model_from_db(
+    db: AsyncSession,
+    rows: list[LLMModel] | None = None,
+) -> None:
+    """#69：把 ``llm_models`` 默认行镜像进运行时单例。
+
+    无默认记录（列表为空）→ 重置为未配置空态；否则整体替换为默认行的
+    provider_type / base_url / model_name / api_key。供启动加载与全部
+    模型写路径（CRUD / 设默认 / settings 兼容）提交后调用。
+    ``rows`` 为可选复用参数：调用方若已取过全量列表可传入，避免重复查询。
+    """
+    if rows is None:
+        rows = await list_model_rows(db)
+    if not rows:
+        reset_runtime_model()
+        return
+    default = next((row for row in rows if row.is_default), rows[0])
+    set_runtime_model(
+        RuntimeModelConfig(
+            provider_type=default.provider_type,
+            base_url=default.base_url,
+            model_name=default.model_name,
+            api_key=default.api_key,
+        )
+    )
+
+
+async def fetch_provider_models(
+    payload: ModelListFetchRequest,
+) -> list[str]:
+    """#69：后端代理调用 provider 的模型列表 API，返回模型名列表。
+
+    OpenAI 兼容与 Anthropic 均为 ``GET {base_url}/models``：OpenAI 兼容
+    返回 ``{"data": [{"id": ...}]}``，Anthropic 返回
+    ``{"data": [{"id": ...}]}``（模型 id 形如 ``claude-...``）。
+    api_key 仅透传给上游 provider，不落库、不回传前端。
+    """
+    base_url = (payload.base_url or "").rstrip("/")
+    headers = {"Authorization": f"Bearer {payload.api_key}"}
+    if payload.provider_type == "anthropic":
+        headers = {
+            "x-api-key": payload.api_key,
+            "anthropic-version": "2023-06-01",
+        }
+    async with httpx.AsyncClient(timeout=10) as client:
+        response = await client.get(f"{base_url}/models", headers=headers)
+        response.raise_for_status()
+        data = response.json().get("data", [])
+    models = []
+    for item in data:
+        model_id = item.get("id") or item.get("name")
+        if model_id:
+            models.append(model_id)
+    return models
 
 
 async def _lock_model_rows(db: AsyncSession) -> None:

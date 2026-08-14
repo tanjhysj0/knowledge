@@ -318,14 +318,16 @@ cleanupTest.describe('Admin Page（管理端独立路由）- E2E (#54)', () => {
     ).toHaveCount(0, { timeout: 15_000 });
   });
 
-  cleanupTest('LLM 设置独立路由展示配置表单，菜单高亮随路由', async ({ page }) => {
+  cleanupTest('LLM 设置独立路由展示模型列表页，菜单高亮随路由', async ({ page }) => {
     await menuItem(page, 'LLM 设置').click();
 
     await expect(page).toHaveURL(/\/admin\/settings$/);
     await expect(menuItem(page, 'LLM 设置')).toHaveClass(/active/);
     await expect(menuItem(page, '小说管理')).not.toHaveClass(/active/);
-    await expect(page.locator('text=LLM 配置')).toBeVisible({ timeout: 5_000 });
-    await expect(page.locator('button:has-text("保存配置")')).toBeVisible();
-    await expect(page.locator('button:has-text("重置")')).toBeVisible();
+    // #69：设置页已改为模型列表页（表格 + 新增表单）。
+    await expect(page.locator('h1')).toContainText('模型管理', { timeout: 5_000 });
+    await expect(page.locator('table')).toBeVisible();
+    await expect(page.locator('button:has-text("拉取模型列表")')).toBeVisible();
+    await expect(page.locator('button:has-text("新增")')).toBeVisible();
   });
 });

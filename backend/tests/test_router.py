@@ -35,6 +35,8 @@ EXPECTED_METHODS = {
     "/api/llm/status": {"GET"},
     # #68：模型列表 CRUD 五端点
     "/api/models": {"GET", "POST"},
+    # #69：模型列表拉取代理
+    "/api/models/fetch": {"POST"},
     "/api/models/{model_id}": {"DELETE", "PUT"},
     "/api/models/{model_id}/default": {"PUT"},
 }
@@ -121,13 +123,16 @@ def test_main_only_mounts_the_unified_router():
 
 
 def test_settings_service_reads_selected_provider(monkeypatch):
-    settings = Settings(
-        llm_provider="anthropic",
-        anthropic_api_key="abcdefgh1234",
-        anthropic_base_url="https://anthropic.example",
-        anthropic_model="claude-test",
+    """#69：get_llm_config 读运行时默认模型单例。"""
+    from app.services.runtime_config import RuntimeModelConfig
+
+    runtime = RuntimeModelConfig(
+        provider_type="anthropic",
+        api_key="abcdefgh1234",
+        base_url="https://anthropic.example",
+        model_name="claude-test",
     )
-    monkeypatch.setattr(settings_service, "get_settings", lambda: settings)
+    monkeypatch.setattr(settings_service, "get_runtime_model", lambda: runtime)
 
     config = settings_service.get_llm_config()
 

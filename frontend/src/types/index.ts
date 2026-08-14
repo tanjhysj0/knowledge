@@ -78,6 +78,46 @@ export interface LLMStatus {
   reason: string;
 }
 
+// ----------------- 模型列表（#68 / #69） -----------------
+
+export interface LLMModel {
+  id: number;
+  provider_type: 'openai' | 'anthropic';
+  base_url: string;
+  model_name: string;
+  api_key_masked: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LLMModelCreate {
+  provider_type: 'openai' | 'anthropic';
+  base_url: string;
+  model_name: string;
+  api_key: string;
+  is_default: boolean;
+}
+
+export interface LLMModelUpdate {
+  provider_type?: 'openai' | 'anthropic';
+  base_url?: string;
+  model_name?: string;
+  // 留空 = 保持原值（与后端语义一致）
+  api_key?: string;
+}
+
+// #69：后端代理拉取 provider 模型列表的请求/响应。
+export interface ModelListFetchRequest {
+  provider_type: 'openai' | 'anthropic';
+  base_url: string;
+  api_key: string;
+}
+
+export interface ModelListResponse {
+  models: string[];
+}
+
 // 会话（#34 / #35）
 export interface Conversation {
   id: number;
