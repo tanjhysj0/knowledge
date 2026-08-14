@@ -1,5 +1,10 @@
 """#66：混合检索管线编排——Query Planner → 五路检索 → Fusion → Reranker
-→ Evidence Pack → Evidence Agent 证据循环。"""
+→ Evidence Pack → Evidence Agent 证据循环。
+
+#71：五路检索与多个子查询均并行执行（asyncio.gather），子查询结果经
+:func:`app.services.retrieval.fusion.merge_hits` 去重合并取 top-N。
+"""
+import asyncio
 from typing import Dict, List, Optional
 
 from app.core.config import get_settings
@@ -8,7 +13,7 @@ from app.services.retrieval.agent import EvidenceAgent
 from app.services.retrieval.bm25 import BM25Retriever
 from app.services.retrieval.dense import DenseRetriever
 from app.services.retrieval.evidence import EvidencePack
-from app.services.retrieval.fusion import normalize_scores, rrf_fusion
+from app.services.retrieval.fusion import merge_hits, normalize_scores, rrf_fusion
 from app.services.retrieval.metadata import ChapterRetriever, EntityRetriever, EventRetriever
 from app.services.retrieval.planner import QueryPlan, QueryPlanner
 from app.services.retrieval.reranker import LLMReranker
@@ -115,28 +120,39 @@ class HybridRetrievalPipeline:
             return f"{query} {' '.join(plan.chapter_hints)}"
         return query
 
+    async def _safe_retrieve(
+        self,
+        strategy: str,
+        query: str,
+        plan: QueryPlan,
+        document_ids: List[int],
+    ) -> List[RetrievalHit]:
+        """单路检索：失败降级为空（并行执行时互不干扰）。"""
+        retriever = self._retrievers.get(strategy)
+        if retriever is None:
+            return []
+        try:
+            strategy_query = self._strategy_query(plan, strategy, query)
+            hits = await retriever.retrieve(
+                strategy_query, document_ids or None, self._top_k
+            )
+        except Exception:  # noqa: BLE001 — 单路失败降级为空
+            return []
+        return hits or []
+
     async def _run_hybrid_queries(
         self,
         query: str,
         plan: QueryPlan,
         document_ids: List[int],
     ) -> List[RetrievalHit]:
-        """对单个查询执行五路检索 + RRF 融合（不含证据循环）。"""
-        hit_groups: Dict[str, List[RetrievalHit]] = {}
-        for strategy in plan.strategies:
-            retriever = self._retrievers.get(strategy)
-            if retriever is None:
-                continue
-            try:
-                strategy_query = self._strategy_query(plan, strategy, query)
-                hits = await retriever.retrieve(
-                    strategy_query, document_ids or None, self._top_k
-                )
-            except Exception:  # noqa: BLE001 — 单路失败降级为空
-                hits = []
-            hit_groups[strategy] = hits or []
-        fused = rrf_fusion(hit_groups, top_n=self._fused_top_n)
-        return fused
+        """对单个查询并行执行五路检索 + RRF 融合（不含证据循环）。"""
+        strategies = [s for s in plan.strategies if s in self._retrievers]
+        results = await asyncio.gather(
+            *(self._safe_retrieve(s, query, plan, document_ids) for s in strategies)
+        )
+        hit_groups = {s: hits for s, hits in zip(strategies, results)}
+        return rrf_fusion(hit_groups, top_n=self._fused_top_n)
 
     async def retrieve(
         self,
@@ -152,12 +168,19 @@ class HybridRetrievalPipeline:
         # 1. Query Planner：问题 + 历史 → QueryPlan。
         plan = await self._llm_planner().plan(question, history)
 
-        # 2. Hybrid Retrieval：子查询 × 策略 → 融合。
-        fused: List[RetrievalHit] = []
-        for sub_query in plan.sub_queries:
-            fused = await self._run_hybrid_queries(sub_query, plan, document_ids)
-            if fused:
-                break  # 首个有命中的子查询即停止（多子查询按序探测）
+        # 2. Hybrid Retrieval：子查询并行探测 → 去重合并（#71）。
+        if not plan.sub_queries:
+            fused: List[RetrievalHit] = []
+        else:
+            results = await asyncio.gather(
+                *(
+                    self._run_hybrid_queries(sq, plan, document_ids)
+                    for sq in plan.sub_queries
+                )
+            )
+            fused = sorted(
+                merge_hits(*results), key=lambda h: h.score, reverse=True
+            )[: self._fused_top_n]
 
         # 3. Reranker：LLM 重排（不可用直通）。
         reranked = await self._llm_reranker().rerank(question, fused)

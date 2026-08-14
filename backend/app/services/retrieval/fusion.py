@@ -48,6 +48,25 @@ def rrf_fusion(
     return ranked[:top_n]
 
 
+def merge_hits(*groups: List[RetrievalHit]) -> List[RetrievalHit]:
+    """多组命中按 (document_id, chunk_index) 去重合并，保留最高分。
+
+    供子查询并行探测后的结果合并使用（各子查询的 fused 分数同为 RRF
+    量级，直接比较公平）；低分重复命中携带章节线索时补充到高分命中上。
+    返回未排序列表，调用方按需排序截断。
+    """
+    merged: Dict[tuple, RetrievalHit] = {}
+    for hits in groups:
+        for hit in hits or []:
+            key = _dedupe_key(hit)
+            existing = merged.get(key)
+            if existing is None or hit.score > existing.score:
+                merged[key] = hit
+            elif hit.chapter and not existing.chapter:
+                existing.chapter = hit.chapter
+    return list(merged.values())
+
+
 def normalize_scores(hits: Iterable[RetrievalHit]) -> List[RetrievalHit]:
     """RRF 分数归一化到 [0, 1]（供 evidence 事件展示，分数只用于排序对比）。"""
     result = list(hits)

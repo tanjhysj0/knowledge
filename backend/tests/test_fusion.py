@@ -1,6 +1,11 @@
 """#66：Fusion（RRF）纯函数单测。"""
 from app.services.retrieval import RetrievalHit
-from app.services.retrieval.fusion import RRF_K, normalize_scores, rrf_fusion
+from app.services.retrieval.fusion import (
+    RRF_K,
+    merge_hits,
+    normalize_scores,
+    rrf_fusion,
+)
 
 
 def _hit(doc_id: int, chunk: int, strategy: str, score: float = 0.8, content: str = "x") -> RetrievalHit:
@@ -66,6 +71,38 @@ class TestRRFFusion:
         fused = rrf_fusion(groups, top_n=10)
         by_key = {(h.document_id, h.chunk_index): h for h in fused}
         assert by_key[(1, 0)].chapter == "第3章"
+
+
+class TestMergeHits:
+    def test_merges_groups_deduping_by_doc_and_chunk(self):
+        groups = [
+            [_hit(1, 0, "dense", 0.9), _hit(2, 0, "dense", 0.8)],
+            [_hit(1, 0, "bm25", 0.7), _hit(3, 0, "bm25", 0.6)],  # (1,0) 重复
+        ]
+        merged = merge_hits(*groups)
+        by_key = {(h.document_id, h.chunk_index): h for h in merged}
+        assert len(by_key) == 3
+
+    def test_keeps_highest_score_on_duplicate(self):
+        groups = [
+            [_hit(1, 0, "dense", 0.9)],
+            [_hit(1, 0, "bm25", 0.5)],
+        ]
+        merged = merge_hits(*groups)
+        assert len(merged) == 1
+        assert merged[0].score == 0.9
+        assert merged[0].strategy == "dense"
+
+    def test_supplements_chapter_hint_from_lower_scored_duplicate(self):
+        chapter_hit = _hit(1, 0, "chapter", 0.4)
+        chapter_hit.chapter = "第3章"
+        groups = [[_hit(1, 0, "dense", 0.9)], [chapter_hit]]
+        merged = merge_hits(*groups)
+        assert merged[0].score == 0.9
+        assert merged[0].chapter == "第3章"
+
+    def test_empty_groups_return_empty(self):
+        assert merge_hits([], []) == []
 
 
 class TestNormalizeScores:

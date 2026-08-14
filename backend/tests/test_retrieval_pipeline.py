@@ -140,8 +140,8 @@ class TestRetrieve:
         assert pack.hits[0].chunk_index == 0
 
     @pytest.mark.asyncio
-    async def test_first_sub_query_hit_stops(self):
-        """首个有命中的子查询即停，后续子查询不再检索。"""
+    async def test_all_sub_queries_executed_in_parallel(self):
+        """#71：所有子查询并行执行（不再首个命中即停）。"""
         dense = _retriever("dense", [_hit(1, 0)])
         plan = QueryPlan(sub_queries=["q1", "q2"], strategies=["dense"])
         pipeline = _pipeline({"dense": dense}, _planner(plan), _reranker(),
@@ -149,12 +149,32 @@ class TestRetrieve:
 
         await pipeline.retrieve("Q", [1])
 
-        assert dense.retrieve.await_count == 1
-        assert dense.retrieve.await_args.args[0] == "q1"
+        assert dense.retrieve.await_count == 2
+        assert sorted(c.args[0] for c in dense.retrieve.await_args_list) == ["q1", "q2"]
 
     @pytest.mark.asyncio
-    async def test_no_hits_probes_next_sub_query(self):
-        """第一个子查询无命中 → 继续第二个子查询。"""
+    async def test_sub_query_hits_merged_and_deduped(self):
+        """#71：多子查询命中合并去重（相同 chunk 保留高分），按分排序截断。"""
+        dense = _retriever("dense")
+        dense.retrieve = AsyncMock(side_effect=[
+            [_hit(1, 0, score=0.9)],                 # q1 → chunk 0（高分）
+            [_hit(1, 0, score=0.8), _hit(1, 1, score=0.7)],  # q2 → chunk 0（重复）+ chunk 1
+        ])
+        plan = QueryPlan(sub_queries=["q1", "q2"], strategies=["dense"])
+        pipeline = _pipeline({"dense": dense}, _planner(plan), _reranker(),
+                             _agent(EvidencePack([])))
+
+        await pipeline.retrieve("Q", [1])
+
+        assert dense.retrieve.await_count == 2
+        rerank_input = pipeline._reranker.rerank.await_args.args[1]
+        # 去重后只剩 chunk 0 / chunk 1 两条（分数断言在 test_fusion 覆盖）
+        assert len(rerank_input) == 2
+        assert {h.chunk_index for h in rerank_input} == {0, 1}
+
+    @pytest.mark.asyncio
+    async def test_all_sub_queries_empty_returns_empty(self):
+        """#71：所有子查询无命中 → 空结果。"""
         dense = _retriever("dense", [])
         plan = QueryPlan(sub_queries=["q1", "q2"], strategies=["dense"])
         pipeline = _pipeline({"dense": dense}, _planner(plan), _reranker(),
@@ -163,4 +183,3 @@ class TestRetrieve:
         await pipeline.retrieve("Q", [1])
 
         assert dense.retrieve.await_count == 2
-        assert [c.args[0] for c in dense.retrieve.await_args_list] == ["q1", "q2"]
