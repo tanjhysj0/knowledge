@@ -51,6 +51,9 @@ async def init_db():
         engine = get_engine()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # #70：旧 settings 单行表已迁移入 llm_models（#68），启动时删除
+            # 遗留物理表（幂等；存量数据库清理，新库无此表也不报错）。
+            await conn.exec_driver_sql("DROP TABLE IF EXISTS settings")
             # 轻量内联迁移（#34）：生产环境为 PostgreSQL，
             # ``ADD COLUMN IF NOT EXISTS`` 允许表已存在时安全补齐。
             await conn.exec_driver_sql(

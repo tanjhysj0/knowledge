@@ -53,24 +53,6 @@ export interface UploadProgress {
   percentage: number;
 }
 
-export interface LLMSettings {
-  provider: string;
-  api_key_masked: string;
-  base_url: string;
-  model: string;
-}
-
-export interface SettingsResponse {
-  llm: LLMSettings;
-}
-
-export interface SettingsUpdate {
-  llm_provider?: string;
-  llm_api_key?: string;
-  llm_base_url?: string;
-  llm_model?: string;
-}
-
 // #45：聊天页 preflight 用的 LLM 可用性。
 export interface LLMStatus {
   provider: string;

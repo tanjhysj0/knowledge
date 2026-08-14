@@ -9,7 +9,6 @@ from app.api import (
     health,
     llm_status,
     models,
-    settings,
 )
 
 
@@ -24,6 +23,5 @@ router.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 router.include_router(
     conversations.router, prefix="/api/conversations", tags=["conversations"]
 )
-router.include_router(settings.router, tags=["settings"])
 router.include_router(models.router, tags=["models"])
 router.include_router(llm_status.router, tags=["llm"])

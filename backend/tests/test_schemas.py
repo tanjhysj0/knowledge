@@ -16,9 +16,6 @@ from app.models.schemas import (
     LLMModelCreate,
     LLMModelResponse,
     LLMModelUpdate,
-    LLMSettings,
-    SettingsResponse,
-    SettingsUpdate,
 )
 
 
@@ -328,51 +325,3 @@ class TestLLMModelSchemas:
         assert response.id == 1
         assert response.is_default is True
         assert response.api_key_masked == "sk-o...1234"
-
-
-class TestSettingsSchemas:
-    """Tests for Settings schemas."""
-
-    def test_llm_settings_valid(self):
-        settings = LLMSettings(
-            provider="openai",
-            api_key_masked="sk-***",
-            base_url="https://api.openai.com",
-            model="gpt-4",
-        )
-        assert settings.provider == "openai"
-        assert settings.api_key_masked == "sk-***"
-        assert settings.model == "gpt-4"
-
-    def test_settings_response_valid(self):
-        resp = SettingsResponse(
-            llm=LLMSettings(
-                provider="openai",
-                api_key_masked="sk-***",
-                base_url="https://api.openai.com",
-                model="gpt-4",
-            ),
-        )
-        assert resp.llm.provider == "openai"
-
-    def test_settings_update_partial(self):
-        """Test that SettingsUpdate allows partial updates."""
-        update = SettingsUpdate(llm_model="gpt-4-turbo")
-        assert update.llm_model == "gpt-4-turbo"
-        assert update.llm_provider is None
-
-    def test_settings_update_all_fields(self):
-        """Test SettingsUpdate with all fields."""
-        update = SettingsUpdate(
-            llm_provider="anthropic",
-            llm_api_key="sk-ant-***",
-            llm_base_url="https://api.anthropic.com",
-            llm_model="claude-3-opus",
-        )
-        assert update.llm_provider == "anthropic"
-        assert update.llm_model == "claude-3-opus"
-
-    def test_settings_update_empty(self):
-        """Test that SettingsUpdate with no fields is valid."""
-        update = SettingsUpdate()
-        assert update.llm_provider is None

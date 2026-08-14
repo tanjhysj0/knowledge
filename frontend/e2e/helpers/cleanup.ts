@@ -2,7 +2,7 @@
  * Shared cleanup utilities for E2E tests.
  * Provides fixtures to:
  * - Track documents uploaded during a test/spec and delete them on teardown
- * - Snapshot/restore settings so provider/key changes don't leak between specs
+ * - Snapshot/restore the llm_models list so provider/key changes don't leak between specs
  */
 import { test as base, request as apiRequest, expect } from '@playwright/test';
 
@@ -36,13 +36,6 @@ async function deleteDocument(id: number): Promise<void> {
   } finally {
     await ctx.dispose();
   }
-}
-
-interface LLMSettingsSnapshot {
-  llm_provider: string;
-  llm_api_key: string | null;
-  llm_base_url: string;
-  llm_model: string;
 }
 
 // #69：模型列表快照（列表 API 只回传脱敏 key，真实 api_key 不可恢复，
@@ -109,42 +102,6 @@ async function restoreModels(snapshot: ModelSummary[]): Promise<void> {
   }
 }
 
-async function getSettingsSnapshot(): Promise<LLMSettingsSnapshot> {
-  const ctx = await apiRequest.newContext({ baseURL: BACKEND_BASE });
-  try {
-    const res = await ctx.get('/api/settings');
-    expect(res.ok()).toBeTruthy();
-    const body = await res.json();
-    const llm = body.llm || {};
-    return {
-      llm_provider: llm.provider,
-      llm_api_key: null, // never restore the key (only the masked value is readable)
-      llm_base_url: llm.base_url,
-      llm_model: llm.model,
-    };
-  } finally {
-    await ctx.dispose();
-  }
-}
-
-async function restoreSettings(snapshot: LLMSettingsSnapshot): Promise<void> {
-  const ctx = await apiRequest.newContext({ baseURL: BACKEND_BASE });
-  try {
-    await ctx.put('/api/settings', {
-      data: {
-        llm_provider: snapshot.llm_provider,
-        llm_base_url: snapshot.llm_base_url,
-        llm_model: snapshot.llm_model,
-        // do NOT include llm_api_key: preserve whatever key was active
-      },
-    });
-  } catch {
-    /* ignore */
-  } finally {
-    await ctx.dispose();
-  }
-}
-
 interface E2EFixtures {
   /**
    * Documents uploaded during a spec are deleted automatically after the spec.
@@ -153,11 +110,6 @@ interface E2EFixtures {
   uploadedDocs: {
     track: (filename: string) => Promise<DocumentSummary | null>;
     cleanupAll: () => Promise<void>;
-  };
-  /** Snapshot/restore LLM settings across a spec. */
-  settingsGuard: {
-    snapshot: LLMSettingsSnapshot;
-    restore: () => Promise<void>;
   };
   /** #69：快照/恢复 llm_models 列表，测试间不泄漏模型记录。 */
   modelsGuard: {
@@ -191,16 +143,6 @@ export const test = base.extend<E2EFixtures>({
 
     // after the spec
     await cleanupAll();
-  },
-
-  settingsGuard: async ({}, use) => {
-    const snapshot = await getSettingsSnapshot();
-    const restore = async () => restoreSettings(snapshot);
-
-    await use({ snapshot, restore });
-
-    // after the spec, restore settings
-    await restore();
   },
 
   modelsGuard: async ({}, use) => {

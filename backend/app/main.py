@@ -10,11 +10,8 @@ from app.services.documents import (
     process_document_index,
     recover_stale_processing_documents,
 )
-from app.services.settings import (
-    load_llm_settings_from_db,
-    migrate_legacy_settings,
-    reset_llm_memory,
-)
+from app.services import models as models_service
+from app.services.runtime_config import reset_runtime_model
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -50,17 +47,15 @@ async def _recover_indexing() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    # #67/#68/#69：DB 是 LLM 配置唯一事实源；先执行旧 settings 单行 →
-    # llm_models 的一次性迁移（#68），再把默认模型加载进运行时单例（#69）
-    # 供 provider 构造与 preflight 读取；失败不影响启动，但也不回退到环境
-    # 变量：显式置为未配置。
+    # #70：``llm_models`` 是 LLM 配置唯一事实源（旧 settings 单行表与
+    # 迁移逻辑已删除）；启动时把默认模型行加载进运行时单例供 provider
+    # 构造与 preflight 读取。加载失败不回退到环境变量，显式置为未配置。
     try:
         session_maker = get_session_maker()
         async with session_maker() as db:
-            await migrate_legacy_settings(db)
-            await load_llm_settings_from_db(db)
+            await models_service.sync_runtime_model_from_db(db)
     except Exception as exc:
-        reset_llm_memory()
+        reset_runtime_model()
         logger.warning("LLM settings load failed, running unconfigured: %s", exc)
     # #63：重启后残留 processing 重置为 pending 并重新入队处理。
     await _recover_indexing()

@@ -4,11 +4,8 @@ from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
 from starlette.requests import Request
 
-from app.core.config import get_settings
 from app.services import mock_llm
 from app.services.runtime_config import get_runtime_model
-
-settings = get_settings()
 
 
 class LLMProvider(Protocol):

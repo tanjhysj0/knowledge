@@ -15,7 +15,6 @@ docker-compose up -d
 cd backend
 export POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_USER=docqa POSTGRES_PASSWORD=docqa POSTGRES_DB=docqa
 export MILVUS_HOST=localhost MILVUS_PORT=19530
-export OPENAI_API_KEY=your-api-key
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 # 3. 启动前端并运行测试

@@ -175,7 +175,6 @@ async def sync_runtime_model_from_db(
 
     无默认记录（列表为空）→ 重置为未配置空态；否则整体替换为默认行的
     provider_type / base_url / model_name / api_key。供启动加载与全部
-    模型写路径（CRUD / 设默认 / settings 兼容）提交后调用。
     ``rows`` 为可选复用参数：调用方若已取过全量列表可传入，避免重复查询。
     """
     if rows is None:

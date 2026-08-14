@@ -99,3 +99,13 @@ class TestInitDbMigration:
             "ALTER TABLE documents "
             "ADD COLUMN IF NOT EXISTS error_message TEXT" in joined
         )
+
+    @pytest.mark.asyncio
+    async def test_drops_legacy_settings_table(self, monkeypatch):
+        """#70：旧 settings 单行表已在启动时删除（幂等 DROP）。"""
+        conn = _FakeConn()
+        monkeypatch.setattr(database, "get_engine", lambda: _FakeEngine(conn))
+
+        await database.init_db()
+
+        assert "DROP TABLE IF EXISTS settings" in conn.statements

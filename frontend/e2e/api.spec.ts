@@ -175,32 +175,6 @@ test.describe('Backend API 契约 - E2E', () => {
     expect(body).toHaveProperty('page_size');
   });
 
-  test('GET /api/settings 应返回嵌套的 llm 配置', async ({ page }) => {
-    const res = await page.request.get('/api/settings');
-    expect(res.ok()).toBeTruthy();
-    const body = await res.json();
-
-    expect(body).toHaveProperty('llm');
-    expect(body.llm).toHaveProperty('provider');
-    expect(body.llm).toHaveProperty('base_url');
-    expect(body.llm).toHaveProperty('model');
-  });
-
-  test('PUT /api/settings 应持久化新配置', async ({ page }) => {
-    const original = await (await page.request.get('/api/settings')).json();
-    const newModel = original.llm.model + '-apitest-' + Date.now();
-
-    const putRes = await page.request.put('/api/settings', {
-      data: { llm_model: newModel },
-    });
-    expect(putRes.ok()).toBeTruthy();
-
-    const reloaded = await (await page.request.get('/api/settings')).json();
-    expect(reloaded.llm.model).toBe(newModel);
-
-    await page.request.put('/api/settings', { data: { llm_model: original.llm.model } });
-  });
-
   test('DELETE /api/documents/{id} 不存在时应返回 404', async ({ page }) => {
     const res = await page.request.delete('/api/documents/999999');
     expect(res.status()).toBe(404);

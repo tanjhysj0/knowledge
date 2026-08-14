@@ -2,7 +2,7 @@
 
 ``llm_models`` 表是配置事实源，但 provider 构造与 preflight 是同步热路径，
 不应每次读库。启动时把**默认模型记录**加载进内存单例；模型 CRUD / 设默认
-/ ``PUT /api/settings`` 等写路径在提交成功后重新同步本单例并重建 provider
+等写路径在提交成功后重新同步本单例并重建 provider
 实例，保证「修改默认模型后下一次对话生效」而无需重启进程。
 
 单例只承载当前生效的一条默认记录（provider_type / base_url / model_name /

@@ -4,19 +4,6 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    # LLM Provider
-    llm_provider: str = "openai"  # "openai" or "anthropic"
-
-    # OpenAI
-    openai_api_key: str = ""
-    openai_base_url: str = ""
-    openai_model: str = ""
-
-    # Anthropic
-    anthropic_api_key: str = ""
-    anthropic_base_url: str = ""
-    anthropic_model: str = ""
-
     # Milvus
     milvus_host: str = "localhost"
     milvus_port: int = 19530

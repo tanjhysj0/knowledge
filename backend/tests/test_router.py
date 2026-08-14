@@ -1,17 +1,11 @@
 """统一 API 路由入口的架构与契约测试。"""
 import ast
-from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock
 
-import pytest
 from fastapi import FastAPI
 
 from app.api.router import router
-from app.core.config import Settings
 from app.main import app
-from app.models.schemas import SettingsUpdate
-from app.services import settings as settings_service
 
 
 EXPECTED_METHODS = {
@@ -30,7 +24,6 @@ EXPECTED_METHODS = {
     "/api/conversations": {"GET", "POST"},
     "/api/conversations/{conversation_id}": {"DELETE", "PATCH"},
     "/api/conversations/{conversation_id}/messages": {"GET"},
-    "/api/settings": {"GET", "PUT"},
     # #45：聊天页 preflight 用的 LLM 可用性端点
     "/api/llm/status": {"GET"},
     # #68：模型列表 CRUD 五端点
@@ -120,102 +113,3 @@ def test_main_only_mounts_the_unified_router():
         )
     ]
     assert route_decorators == []
-
-
-def test_settings_service_reads_selected_provider(monkeypatch):
-    """#69：get_llm_config 读运行时默认模型单例。"""
-    from app.services.runtime_config import RuntimeModelConfig
-
-    runtime = RuntimeModelConfig(
-        provider_type="anthropic",
-        api_key="abcdefgh1234",
-        base_url="https://anthropic.example",
-        model_name="claude-test",
-    )
-    monkeypatch.setattr(settings_service, "get_runtime_model", lambda: runtime)
-
-    config = settings_service.get_llm_config()
-
-    assert config.api_key_masked == "abcd...1234"
-    assert config.base_url == "https://anthropic.example"
-    assert config.model == "claude-test"
-
-
-class _FakeSettingsDb:
-    """settings 服务所需的最小假 db Session（#68 队列式：按序弹出结果）。"""
-
-    def __init__(self, specs=None):
-        self._specs = list(specs or [])
-        self.executed = []
-        self.commits = 0
-        self.added = []
-
-    async def execute(self, statement):
-        self.executed.append(statement)
-        spec = self._specs.pop(0) if self._specs else {}
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = spec.get("scalar")
-        result.scalars.return_value.all.return_value = spec.get("rows", [])
-        return result
-
-    def add(self, row):
-        if row.id is None:
-            row.id = len(self.added) + 1
-        if row.created_at is None:
-            row.created_at = datetime(2026, 8, 1)
-        if row.updated_at is None:
-            row.updated_at = datetime(2026, 8, 1)
-        self.added.append(row)
-
-    async def commit(self):
-        self.commits += 1
-
-    async def refresh(self, row):
-        return None
-
-
-@pytest.mark.asyncio
-async def test_settings_service_updates_selected_provider(monkeypatch):
-    """#68：显式切换 provider 且无对应记录 → 新建默认记录并同步内存。"""
-    from app.models.llm_model import LLMModel
-
-    settings = Settings(llm_provider="openai", anthropic_api_key="old-key")
-    reset_calls: list[bool] = []
-    monkeypatch.setattr(settings_service, "get_settings", lambda: settings)
-    monkeypatch.setattr(
-        settings_service, "reset_providers", lambda: reset_calls.append(True)
-    )
-    post = LLMModel(
-        id=1,
-        provider_type="anthropic",
-        api_key="new-secret",
-        base_url="",
-        model_name="new-model",
-        is_default=True,
-        created_at=None,
-        updated_at=None,
-    )
-    db = _FakeSettingsDb(
-        specs=[
-            {"rows": []},  # update 前列表
-            {"rows": []},  # create_model 内空列表校验
-            {},  # create_model 内加锁
-            {},  # create_model 内降级
-            {"rows": [post]},  # load 重载
-        ]
-    )
-    update = SettingsUpdate(
-        llm_provider="anthropic", llm_api_key="new-secret", llm_model="new-model"
-    )
-
-    response = await settings_service.update_llm_settings(db=db, update=update)
-
-    assert settings.llm_provider == "anthropic"
-    assert settings.anthropic_api_key == "new-secret"
-    assert settings.anthropic_model == "new-model"
-    assert response.settings.llm.provider == "anthropic"
-    assert response.message == "Settings updated and providers reinitialized"
-    assert reset_calls == [True]
-    assert len(db.added) == 1
-    assert db.added[0].provider_type == "anthropic"
-    assert db.commits >= 1

@@ -121,30 +121,6 @@ class PaginatedDocumentsResponse(BaseModel):
     total_pages: int
 
 
-class LLMSettings(BaseModel):
-    provider: str
-    api_key_masked: str
-    base_url: str
-    model: str
-
-
-class SettingsResponse(BaseModel):
-    llm: LLMSettings
-
-
-class SettingsUpdate(BaseModel):
-    llm_provider: Optional[str] = None
-    llm_api_key: Optional[str] = None
-    llm_base_url: Optional[str] = None
-    llm_model: Optional[str] = None
-
-
-class SettingsUpdateResponse(BaseModel):
-    """PUT /api/settings 的响应载荷。"""
-    message: str
-    settings: SettingsResponse
-
-
 # ----------------- 模型列表（#68） -----------------
 
 class LLMModelCreate(BaseModel):

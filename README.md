@@ -29,7 +29,7 @@ docker-compose up -d
 
 ```bash
 cp .env.example .env
-# 编辑 .env 填入你的 OpenAI API Key
+# 编辑 .env 填入外部依赖连接信息；LLM 模型配置在设置页维护
 ```
 
 ### 3. 启动后端

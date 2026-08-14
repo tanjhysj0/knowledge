@@ -6,8 +6,7 @@
  *  2. 运行时 LLM 失败（SSE 中间 error 事件）→ banner 无 "去设置" 链接
  *  3. 关闭 banner 按钮可隐藏 banner
  *
- * 全部使用 page.route 拦截 HTTP 响应，不修改真实 LLM 配置（settingsGuard
- * 不恢复 api_key，如果改真实设置会污染后续测试）。
+ * 全部使用 page.route 拦截 HTTP 响应，不修改真实 LLM 配置（避免污染后续测试）。
  */
 import { test, expect } from '@playwright/test';
 

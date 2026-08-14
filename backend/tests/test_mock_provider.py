@@ -94,9 +94,8 @@ class TestGetLLMProviderHeaderSwitch:
 
     def test_returns_real_provider_when_header_absent(self):
         request = _make_request({})
-        with patch("app.services.llm.settings", llm_provider="openai"):
-            with patch("app.services.llm.AsyncOpenAI"):
-                provider = get_llm_provider(request)
+        with patch("app.services.llm.AsyncOpenAI"):
+            provider = get_llm_provider(request)
         assert isinstance(provider, OpenAIProvider)
 
     def test_returns_mock_when_header_true(self):

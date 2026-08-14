@@ -10,8 +10,6 @@ import type {
   LLMStatus,
   PaginatedDocumentsResponse,
   UploadProgress,
-  SettingsResponse,
-  SettingsUpdate,
   LLMModel,
   LLMModelCreate,
   LLMModelUpdate,
@@ -179,18 +177,6 @@ export const conversationApi = {
       `/conversations/${id}`,
       payload
     );
-    return response.data;
-  },
-};
-
-export const settingsApi = {
-  get: async (): Promise<SettingsResponse> => {
-    const response = await api.get<SettingsResponse>('/settings');
-    return response.data;
-  },
-
-  update: async (settings: SettingsUpdate): Promise<SettingsResponse> => {
-    const response = await api.put<SettingsResponse>('/settings', settings);
     return response.data;
   },
 };
