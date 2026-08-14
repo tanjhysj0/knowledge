@@ -21,9 +21,25 @@ const allProjects = [
 
 // By default run only chromium (fast, no extra browser downloads).
 // Set E2E_ALL_BROWSERS=1 to run the full multi-browser matrix.
-const projects = process.env.E2E_ALL_BROWSERS
+const mainProjects = (process.env.E2E_ALL_BROWSERS
   ? allProjects
-  : allProjects.filter((p) => p.name === 'chromium');
+  : allProjects.filter((p) => p.name === 'chromium')
+).map((p) => ({
+  ...p,
+  testIgnore: /preflight-unconfigured\.spec\.ts/,
+  dependencies: ['preflight-setup'],
+}));
+
+// #66 后续：preflight 拒绝路径（preflight-unconfigured.spec）需要短暂清空
+// 默认模型 api_key，与主套件并行共享后端 DB 时该窗口会随机打挂聊天测试。
+// 故拆为前置 project：先串行跑完（收尾配回 dummy key），主套件才并行启动。
+const preflightProject = {
+  name: 'preflight-setup',
+  testMatch: /preflight-unconfigured\.spec\.ts/,
+  use: { ...devices['Desktop Chrome'] },
+};
+
+const projects = [preflightProject, ...mainProjects];
 
 export default defineConfig({
   testDir: './e2e',
@@ -31,6 +47,7 @@ export default defineConfig({
   // 避免在测试环境调用真实 LLM。
   globalSetup: './e2e/helpers/globalSetup.ts',
   // 测试并行执行。状态隔离由各 spec 的 beforeEach / afterEach 负责（清 history、清文档、复原 settings）。
+  // preflight-unconfigured.spec 例外：它是前置 project（dependencies），先于主套件串行跑完。
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

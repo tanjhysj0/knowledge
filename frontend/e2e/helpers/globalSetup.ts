@@ -4,12 +4,13 @@
  * in ``app.services.llm.get_llm_provider`` and swaps in ``MockLLMProvider``,
  * so no test ever invokes the real LLM.
  *
- * This runs once per `npx playwright test` invocation. The header is set on
- * each context by `playwright.config.ts` via `use.extraHTTPHeaders`, so this
- * file is intentionally a no-op placeholder kept for future setup needs.
+ * #66 后续：preflight 无条件检查默认模型 api_key（chat.py 不再豁免 mock
+ * 请求），因此测试开始前先确保默认模型有 dummy key，否则无 key 环境
+ * （CI / 新机器）所有聊天 E2E 会被 preflight 拒绝。后端未就绪时静默
+ * 跳过——前置 project（preflight-unconfigured.spec）收尾也会配回 key。
  */
+import { ensureDefaultModelKey } from './cleanup';
+
 export default async function globalSetup(): Promise<void> {
-  // Reserved for future pre-run setup (e.g. resetting test data).
-  // The X-E2E-Test header is injected via `use.extraHTTPHeaders` in
-  // `playwright.config.ts`, which every context inherits automatically.
+  await ensureDefaultModelKey();
 }

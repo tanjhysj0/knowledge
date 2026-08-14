@@ -1,5 +1,4 @@
 import { test, expect } from '@playwright/test';
-import { test as cleanupTest } from './helpers/cleanup';
 
 // 直接对后端 API 做契约断言。/api/chat 与 /api/chat/stream 走真实后端，
 // 后端依靠 X-E2E-Test Header 自动返回 MockLLMProvider，不再额外 mock。
@@ -109,39 +108,6 @@ test.describe('Backend API 契约 - E2E', () => {
     expect(messageEvents.map((item) => (item.data as { content: string }).content).join('')).toBe(
       'Hello! I am a mocked DocQA assistant. (no real LLM was called)',
     );
-  });
-
-  cleanupTest('POST /api/chat/stream 错误路径应返回 event: error 且 data 含 error 字符串', async ({ page, modelsGuard }) => {
-    cleanupTest.setTimeout(30_000);
-    // #66 前置修复：主动清空 LLM api_key（快照重建为空串占位），让 preflight
-    // 拒绝不依赖本机 LLM 配置状态（本机配置了真实 key 时该用例会误走真实
-    // LLM，慢响应触发 SSE 心跳注释）。spec 结束后 modelsGuard 自动恢复快照。
-    await modelsGuard.restore();
-
-    // cleanupTest 不走本文件的 test.beforeEach，需自行加载页面。
-    await page.goto('/');
-    await page.waitForLoadState('networkidle').catch(() => {});
-
-    // 删除 X-E2E-Test header，强制后端走真实 LLM preflight（api_key 已清空 →
-    // #45 preflight 拒绝 → error + done SSE）。这是 SSE 错误路径的契约测试。
-    await page.route('**/api/chat/stream', async (route) => {
-      const headers = { ...route.request().headers() };
-      delete headers['x-e2e-test'];
-      delete headers['X-E2E-Test'];
-      await route.continue({ headers });
-    });
-
-    const response = await postStreamFromBrowser(page, 'error contract ' + Date.now());
-    expect(response.status).toBe(200);
-
-    const events = parseSseEvents(response.body);
-    const errorEvents = events.filter((item) => item.event === 'error');
-    expect(errorEvents.length).toBe(1);
-    const errorData = errorEvents[0].data as { error: string };
-    expect(typeof errorData.error).toBe('string');
-    expect(errorData.error.length).toBeGreaterThan(0);
-    // 错误路径不应该有 message 事件（#45 preflight 会以 done 收尾）
-    expect(events.filter((item) => item.event === 'message').length).toBe(0);
   });
 
   test('POST /api/chat 应返回 ChatResponse 结构', async ({ page }) => {
