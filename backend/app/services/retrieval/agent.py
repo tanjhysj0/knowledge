@@ -13,11 +13,14 @@ LLM 与检索函数均由构造注入（单测用 mock LLM + mock 检索器驱�
 分支）；图自身无外部依赖。
 """
 import json
+import logging
 import re
+import time
 from typing import Any, Dict, List, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.core.perf import elapsed_ms
 from app.services.retrieval import RetrievalHit
 from app.services.retrieval.evidence import EvidencePack
 from app.services.retrieval.fusion import normalize_scores
@@ -29,6 +32,8 @@ PLAN_QUERIES_MARKER = "[PLAN_QUERIES]"
 
 # 达到迭代上限仍证据不足时附加的回答提示。
 LIMITED_EVIDENCE_NOTE = "（证据有限：检索补充已达上限，以下回答可能不完整）"
+
+logger = logging.getLogger(__name__)
 
 
 class AgentState(TypedDict, total=False):
@@ -144,6 +149,7 @@ class EvidenceAgent:
             return {"iteration": iteration, "sufficient": False, "note": note}
 
         try:
+            judge_start = time.perf_counter()
             raw = await self._resolve_llm().chat(
                 messages=[
                     {
@@ -155,6 +161,7 @@ class EvidenceAgent:
                 ],
                 temperature=0.0,
             )
+            logger.info("[perf] agent.judge_llm ms=%.1f", elapsed_ms(judge_start))
         except Exception:  # noqa: BLE001 — 判定失败 fail-open：直接作答
             return {"iteration": iteration, "sufficient": True, "note": note}
 
@@ -165,6 +172,7 @@ class EvidenceAgent:
 
     async def _plan_more_queries(self, state: AgentState) -> Dict[str, Any]:
         try:
+            plan_start = time.perf_counter()
             raw = await self._resolve_llm().chat(
                 messages=[
                     {
@@ -178,6 +186,7 @@ class EvidenceAgent:
                 ],
                 temperature=0.3,
             )
+            logger.info("[perf] agent.plan_queries_llm ms=%.1f", elapsed_ms(plan_start))
         except Exception:  # noqa: BLE001 — 无法生成补充查询 → 强制作答
             return {"more_queries": [], "note": state.get("note") or ""}
         return {"more_queries": parse_plan_queries_result(raw), "note": state.get("note") or ""}

@@ -5,17 +5,22 @@
 ``message_count`` / ``updated_at``。
 """
 import json
+import logging
+import time
 from typing import AsyncIterator, Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
+from app.core.perf import elapsed_ms
 from app.models.document import ChatMessage, Document
 from app.services import conversations as conversation_service
 from app.services.conversations import ConversationNotFoundError, touch_conversation
 from app.services.rag import RAGService
 from app.services.think_splitter import ThinkSplitter
+
+logger = logging.getLogger(__name__)
 
 
 class ChatServiceError(Exception):
@@ -108,15 +113,22 @@ async def ask(
     rag_service = RAGService(request=request)
     # 先检索：拿 sources 与 prompt 构造依据（#32 + #33）；
     # #63：未 ready 的小说不参与检索。
+    retrieve_start = time.perf_counter()
     search_results = await rag_service.aretrieve(
         question=question,
         document_ids=await _filter_ready_document_ids(db, document_ids),
         top_k=5,
         history=history,
     )
+    logger.info(
+        "[perf] chat.retrieve hits=%d ms=%.1f",
+        len(search_results),
+        elapsed_ms(retrieve_start),
+    )
     sources = rag_service._dedupe_sources(search_results)
     used_external = not search_results
 
+    answer_start = time.perf_counter()
     if used_external:
         answer_text = await rag_service._llm().chat(
             messages=[{"role": "user", "content": rag_service._build_external_prompt(question)}]
@@ -125,6 +137,11 @@ async def ask(
         answer_text = await rag_service._llm().chat(
             messages=[{"role": "user", "content": rag_service._build_rag_prompt(question, search_results)}]
         )
+    logger.info(
+        "[perf] chat.llm_answer external=%s ms=%.1f",
+        used_external,
+        elapsed_ms(answer_start),
+    )
 
     db.add(
         ChatMessage(
@@ -167,6 +184,7 @@ async def stream_answer(
     sources: List[str] = []
     full_answer = ""
     splitter = ThinkSplitter()
+    total_start = time.perf_counter()
 
     try:
         # #36：会话必须存在 → 不存在直接报 404
@@ -198,6 +216,7 @@ async def stream_answer(
         # #63：未 ready 的小说不参与检索。
         # #66：aretrieve 内部跑混合检索管线（planner → 五路 → fusion →
         # rerank → 证据循环），契约不变。
+        retrieve_start = time.perf_counter()
         search_results = await rag_service.aretrieve(
             question=question,
             document_ids=await _filter_ready_document_ids(db, document_ids),
@@ -205,6 +224,11 @@ async def stream_answer(
             # #66：当前问题之前的历史（context_messages 末尾刚 append 了
             # 当前问题，切掉后传给 planner 做多轮指代消解）。
             history=context_messages[:-1],
+        )
+        logger.info(
+            "[perf] chat.retrieve hits=%d ms=%.1f",
+            len(search_results),
+            elapsed_ms(retrieve_start),
         )
         sources = rag_service._dedupe_sources(search_results)
         used_external = not search_results
@@ -223,10 +247,18 @@ async def stream_answer(
                 "data": json.dumps(evidence_pack.to_dict(), ensure_ascii=False),
             }
 
+        llm_start = time.perf_counter()
+        first_token_logged = False
         async for chunk_data in rag_service._llm().stream_chat(messages=messages):
             for kind, segment in splitter.feed(chunk_data):
                 if not segment:
                     continue
+                if not first_token_logged:
+                    first_token_logged = True
+                    logger.info(
+                        "[perf] chat.llm_first_token ms=%.1f",
+                        elapsed_ms(llm_start),
+                    )
                 if kind == "thinking":
                     yield {
                         "event": "thinking",
@@ -254,6 +286,12 @@ async def stream_answer(
                     "data": json.dumps({"content": segment}, ensure_ascii=False),
                 }
 
+        logger.info(
+            "[perf] chat.llm_stream_total external=%s ms=%.1f",
+            used_external,
+            elapsed_ms(llm_start),
+        )
+
         assistant_msg = ChatMessage(
             role="assistant",
             content=full_answer,
@@ -265,6 +303,8 @@ async def stream_answer(
         await db.commit()
         # #36：同步会话 message_count / updated_at
         await touch_conversation(db, conversation_id, delta=2)
+
+        logger.info("[perf] chat.total ms=%.1f", elapsed_ms(total_start))
 
         yield {
             "event": "done",

@@ -5,9 +5,12 @@
 :func:`app.services.retrieval.fusion.merge_hits` 去重合并取 top-N。
 """
 import asyncio
+import logging
+import time
 from typing import Dict, List, Optional
 
 from app.core.config import get_settings
+from app.core.perf import elapsed_ms
 from app.services.retrieval import RetrievalHit
 from app.services.retrieval.agent import EvidenceAgent
 from app.services.retrieval.bm25 import BM25Retriever
@@ -19,6 +22,7 @@ from app.services.retrieval.planner import QueryPlan, QueryPlanner
 from app.services.retrieval.reranker import LLMReranker
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 # 策略名 → 检索器类（工厂按 settings 开关实例化）。
 _RETRIEVER_CLASSES = {
@@ -127,17 +131,32 @@ class HybridRetrievalPipeline:
         plan: QueryPlan,
         document_ids: List[int],
     ) -> List[RetrievalHit]:
-        """单路检索：失败降级为空（并行执行时互不干扰）。"""
+        """单路检索：失败降级为空（并行执行时互不干扰）；耗时按策略打点。"""
         retriever = self._retrievers.get(strategy)
         if retriever is None:
             return []
+        start = time.perf_counter()
         try:
             strategy_query = self._strategy_query(plan, strategy, query)
             hits = await retriever.retrieve(
                 strategy_query, document_ids or None, self._top_k
             )
-        except Exception:  # noqa: BLE001 — 单路失败降级为空
+        except Exception as exc:  # noqa: BLE001 — 单路失败降级为空
+            logger.warning(
+                "[perf] strategy=%s failed query=%.40r ms=%.1f exc=%s",
+                strategy,
+                query,
+                elapsed_ms(start),
+                exc,
+            )
             return []
+        logger.info(
+            "[perf] strategy=%s query=%.40r hits=%d ms=%.1f",
+            strategy,
+            query,
+            len(hits or []),
+            elapsed_ms(start),
+        )
         return hits or []
 
     async def _run_hybrid_queries(
@@ -147,12 +166,21 @@ class HybridRetrievalPipeline:
         document_ids: List[int],
     ) -> List[RetrievalHit]:
         """对单个查询并行执行五路检索 + RRF 融合（不含证据循环）。"""
+        start = time.perf_counter()
         strategies = [s for s in plan.strategies if s in self._retrievers]
         results = await asyncio.gather(
             *(self._safe_retrieve(s, query, plan, document_ids) for s in strategies)
         )
         hit_groups = {s: hits for s, hits in zip(strategies, results)}
-        return rrf_fusion(hit_groups, top_n=self._fused_top_n)
+        fused = rrf_fusion(hit_groups, top_n=self._fused_top_n)
+        logger.info(
+            "[perf] hybrid query=%.40r strategies=%d fused=%d ms=%.1f",
+            query,
+            len(strategies),
+            len(fused),
+            elapsed_ms(start),
+        )
+        return fused
 
     async def retrieve(
         self,
@@ -165,8 +193,17 @@ class HybridRetrievalPipeline:
         返回最终 EvidencePack；``pack.hits`` 顺序即 RAG prompt 的上下文
         顺序。
         """
+        total_start = time.perf_counter()
+
         # 1. Query Planner：问题 + 历史 → QueryPlan。
+        plan_start = time.perf_counter()
         plan = await self._llm_planner().plan(question, history)
+        logger.info(
+            "[perf] plan sub_queries=%d strategies=%s ms=%.1f",
+            len(plan.sub_queries),
+            ",".join(plan.strategies),
+            elapsed_ms(plan_start),
+        )
 
         # 2. Hybrid Retrieval：子查询并行探测 → 去重合并（#71）。
         if not plan.sub_queries:
@@ -183,11 +220,27 @@ class HybridRetrievalPipeline:
             )[: self._fused_top_n]
 
         # 3. Reranker：LLM 重排（不可用直通）。
+        rerank_start = time.perf_counter()
         reranked = await self._llm_reranker().rerank(question, fused)
+        logger.info(
+            "[perf] rerank in=%d out=%d ms=%.1f",
+            len(fused),
+            len(reranked),
+            elapsed_ms(rerank_start),
+        )
 
         # 4. Evidence Pack（归一化分数便于 SSE 透出）。
         evidence = normalize_scores(reranked)
 
         # 5. Evidence Agent：证据循环（足够 → 作答 / 不足 → 补充检索）。
+        agent_start = time.perf_counter()
         pack = await self._llm_agent().run(question, plan, document_ids, evidence)
+        logger.info(
+            "[perf] agent iterations=%d hits=%d sufficient=%s ms=%.1f",
+            pack.iterations,
+            len(pack.hits),
+            pack.sufficient,
+            elapsed_ms(agent_start),
+        )
+        logger.info("[perf] retrieval.total ms=%.1f", elapsed_ms(total_start))
         return pack

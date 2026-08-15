@@ -16,6 +16,18 @@ from app.services.runtime_config import reset_runtime_model
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
+# 应用性能打点日志（services/retrieval/pipeline.py 等 ``[perf]`` 日志）默认
+# 在 INFO 透出；uvicorn 自带日志配置只开 WARNING，这里给 ``app`` 层级补一个
+# 专用 handler（不复用 root，避免 uvicorn 访问日志重复打印）。
+_app_logger = logging.getLogger("app")
+_app_logger.setLevel(logging.INFO)
+if not _app_logger.handlers:
+    _app_handler = logging.StreamHandler()
+    _app_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+    )
+    _app_logger.addHandler(_app_handler)
+
 # #63：后台索引任务句柄集合——持有引用防止任务被 GC；完成后自动移除。
 _background_index_tasks: set = set()
 
