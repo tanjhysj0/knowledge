@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-// 直接对后端 API 做契约断言。/api/chat 与 /api/chat/stream 走真实后端，
+// 直接对后端 API 做契约断言。/api/v1/chat 与 /api/v1/chat/stream 走真实后端，
 // 后端依靠 X-E2E-Test Header 自动返回 MockLLMProvider，不再额外 mock。
 //
 // 由于 `page.route` 只能拦截浏览器发出的请求（不能拦截 page.request 从 Node.js
@@ -42,7 +42,7 @@ test.describe('Backend API 契约 - E2E', () => {
     try {
       return await page.evaluate(
         async ({ msg, convId }: { msg: string; convId: number }) => {
-          const res = await fetch('/api/chat', {
+          const res = await fetch('/api/v1/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: msg, document_ids: [], conversation_id: convId }),
@@ -66,7 +66,7 @@ test.describe('Backend API 契约 - E2E', () => {
     try {
       return await page.evaluate(
         async ({ msg, requestHeaders, convId }: { msg: string; requestHeaders: Record<string, string>; convId: number }) => {
-          const res = await fetch('/api/chat/stream', {
+          const res = await fetch('/api/v1/chat/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...requestHeaders },
             body: JSON.stringify({ message: msg, document_ids: [], conversation_id: convId }),
@@ -91,7 +91,7 @@ test.describe('Backend API 契约 - E2E', () => {
     });
   }
 
-  test('POST /api/chat/stream 应遵守 message 与 done SSE 契约', async ({ page }) => {
+  test('POST /api/v1/chat/stream 应遵守 message 与 done SSE 契约', async ({ page }) => {
     const response = await postStreamFromBrowser(page, 'stream contract ' + Date.now());
     expect(response.status).toBe(200);
 
@@ -110,7 +110,7 @@ test.describe('Backend API 契约 - E2E', () => {
     );
   });
 
-  test('POST /api/chat 应返回 ChatResponse 结构', async ({ page }) => {
+  test('POST /api/v1/chat 应返回 ChatResponse 结构', async ({ page }) => {
     const convId = await createConversation(page);
     const { status, body } = await postChatFromBrowser(page, 'Hello API', convId);
     expect(status).toBe(200);

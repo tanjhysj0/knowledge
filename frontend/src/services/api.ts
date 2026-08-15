@@ -130,7 +130,8 @@ export const chatApi = {
     request: ChatRequest,
     signal?: AbortSignal
   ): Promise<Response> => {
-    const response = await fetch('/api/chat/stream', {
+    // #76：聊天端点迁移至 v1，请求路径同步更新为 /api/v1/chat/stream
+    const response = await fetch('/api/v1/chat/stream', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

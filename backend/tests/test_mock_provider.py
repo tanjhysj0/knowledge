@@ -25,8 +25,8 @@ def _make_request(headers):
     scope = {
         "type": "http",
         "method": "POST",
-        "path": "/api/chat",
-        "raw_path": b"/api/chat",
+        "path": "/api/v1/chat",
+        "raw_path": b"/api/v1/chat",
         "headers": raw_headers,
         "query_string": b"",
     }

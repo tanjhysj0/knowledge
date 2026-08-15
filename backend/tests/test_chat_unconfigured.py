@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api import chat as chat_module
+from app.api.v1 import chat as chat_module
 from app.main import app
 from app.models.schemas import ChatRequest
 from app.services.rag import RAGService
@@ -16,7 +16,7 @@ client = TestClient(app)
 
 
 def _patch_llm_unconfigured(monkeypatch, reason: str = "OpenAI API Key 未配置"):
-    """让 ``is_llm_configured`` 在 ``app.api.chat`` 模块作用域内返回 ``(False, reason)``。"""
+    """让 ``is_llm_configured`` 在 ``app.api.v1.chat`` 模块作用域内返回 ``(False, reason)``。"""
     monkeypatch.setattr(chat_module, "is_llm_configured", lambda: (False, reason))
 
 
@@ -30,13 +30,13 @@ def mock_rag_retrieve():
 
 
 class TestChatEndpointLLMUnconfigured:
-    """``POST /api/chat`` 在 LLM 未配置时直接返回 503 + reason。"""
+    """``POST /api/v1/chat`` 在 LLM 未配置时直接返回 503 + reason。"""
 
     def test_returns_503_with_reason(self, monkeypatch):
         _patch_llm_unconfigured(monkeypatch, "OpenAI API Key 未配置")
 
         response = client.post(
-            "/api/chat",
+            "/api/v1/chat",
             json={"message": "hi", "conversation_id": 1, "document_ids": []},
         )
 
@@ -54,7 +54,7 @@ class TestChatEndpointLLMUnconfigured:
 
         with patch.object(chat_module.chat_service, "ask", new=AsyncMock()) as mock_ask:
             response = client.post(
-                "/api/chat",
+                "/api/v1/chat",
                 headers={"X-E2E-Test": "true"},
                 json={"message": "hi", "conversation_id": 1, "document_ids": []},
             )
@@ -68,7 +68,7 @@ class TestChatEndpointLLMUnconfigured:
         # 即便 conversation 不存在，未配置也应优先返回 503（不调 chat_service.ask）
         with patch.object(chat_module.chat_service, "ask", new=AsyncMock()) as mock_ask:
             response = client.post(
-                "/api/chat",
+                "/api/v1/chat",
                 json={"message": "hi", "conversation_id": 999, "document_ids": []},
             )
             assert response.status_code == 503
@@ -76,7 +76,7 @@ class TestChatEndpointLLMUnconfigured:
 
 
 class TestChatStreamEndpointLLMUnconfigured:
-    """``POST /api/chat/stream`` 在 LLM 未配置时立即产 error + done SSE。"""
+    """``POST /api/v1/chat/stream`` 在 LLM 未配置时立即产 error + done SSE。"""
 
     @pytest.mark.asyncio
     async def test_e2e_mock_request_still_rejected_when_unconfigured(self, monkeypatch):

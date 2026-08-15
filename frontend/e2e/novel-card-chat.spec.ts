@@ -118,7 +118,7 @@ cleanupTest.describe('点击小说卡片开始讨论 - E2E (#51)', () => {
 
       // 发送消息：请求体 document_ids 仅含该小说 id
       const reqPromise = page.waitForRequest(
-        (req) => req.url().includes('/api/chat/stream'),
+        (req) => req.url().includes('/api/v1/chat/stream'),
         { timeout: 5_000 }
       );
       await page.locator('textarea').fill('这本小说的主角是谁');

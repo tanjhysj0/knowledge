@@ -51,8 +51,8 @@ test.describe('Chat Page - LLM 异常 Banner (Issue #45)', () => {
       });
     });
 
-    // 2. 拦截 /api/chat/stream → 返回 503 (preflight 拒绝)
-    await page.route('**/api/chat/stream', async (route) => {
+    // 2. 拦截 /api/v1/chat/stream → 返回 503 (preflight 拒绝)
+    await page.route('**/api/v1/chat/stream', async (route) => {
       await route.fulfill({
         status: 503,
         contentType: 'application/json',
@@ -113,7 +113,7 @@ test.describe('Chat Page - LLM 异常 Banner (Issue #45)', () => {
   test('运行时 LLM 失败（中间 SSE error 事件）应触发 banner（无去设置链接）', async ({ page }) => {
     // 中间 SSE 失败：先发 message 让前端不显示 banner（preflight 通过），
     // 然后 error 事件让前端触发 banner。
-    await page.route('**/api/chat/stream', async (route) => {
+    await page.route('**/api/v1/chat/stream', async (route) => {
       const body =
         `event: error\ndata: {"error":"Mock LLM unavailable"}\n\n` +
         `event: done\ndata: {"sources":[]}\n\n`;

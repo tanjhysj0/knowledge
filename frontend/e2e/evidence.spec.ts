@@ -5,7 +5,7 @@ import { test as cleanupTest, BACKEND_BASE } from './helpers/cleanup';
  * Issue #66: 混合检索 + Evidence Agent 的 SSE 契约。
  *
  * 覆盖验收：
- * - /api/chat/stream 在 message 之前发出可选 evidence 事件（证据包摘要）；
+ * - /api/v1/chat/stream 在 message 之前发出可选 evidence 事件（证据包摘要）；
  * - done 事件扩展结构化 evidence 字段（向下兼容：sources 仍是数组）；
  * - x-e2e-mock-judge 头控制证据判定：默认 sufficient 直接作答；
  *   insufficient 触发补充检索循环，达上限后强制作答（note 非空）。
@@ -100,7 +100,7 @@ cleanupTest.describe('Evidence 事件契约 - E2E (#66)', () => {
 
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (judgeHeader) headers['x-e2e-mock-judge'] = judgeHeader;
-        const res = await fetch('/api/chat/stream', {
+        const res = await fetch('/api/v1/chat/stream', {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -161,7 +161,7 @@ cleanupTest.describe('Evidence 事件契约 - E2E (#66)', () => {
         const doc = docsBody.items.find((d) => d.filename === filename);
         if (!doc) throw new Error(`ready 小说未出现在默认列表: ${filename}`);
 
-        const res = await fetch('/api/chat/stream', {
+        const res = await fetch('/api/v1/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-e2e-mock-judge': judgeHeader },
           body: JSON.stringify({

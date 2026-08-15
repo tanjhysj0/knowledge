@@ -18,8 +18,9 @@ EXPECTED_METHODS = {
     "/api/documents/{document_id}/reindex": {"POST"},
     # #47：封面静态资源端点
     "/api/covers/{filename}": {"GET"},
-    "/api/chat": {"POST"},
-    "/api/chat/stream": {"POST"},
+    # #76：聊天端点迁移至 v1（旧 /api/chat 路径下线）
+    "/api/v1/chat": {"POST"},
+    "/api/v1/chat/stream": {"POST"},
     # #36：全量 /api/chat/history 废除，统一走 /api/conversations/{id}/messages
     "/api/conversations": {"GET", "POST"},
     "/api/conversations/{conversation_id}": {"DELETE", "PATCH"},
@@ -58,6 +59,15 @@ def test_unified_router_exposes_existing_endpoints():
     routes = _openapi_methods(test_app)
     for path, methods in EXPECTED_METHODS.items():
         assert routes.get(path, set()) >= {method.lower() for method in methods}
+
+
+def test_legacy_chat_paths_removed():
+    """#76：旧 ``/api/chat`` 与 ``/api/chat/stream`` 路径不再提供。"""
+    test_app = FastAPI()
+    test_app.include_router(router)
+    routes = _openapi_methods(test_app)
+    assert "/api/chat" not in routes
+    assert "/api/chat/stream" not in routes
 
 
 def test_application_mounts_unified_router():

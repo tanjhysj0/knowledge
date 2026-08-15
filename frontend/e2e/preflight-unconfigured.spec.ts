@@ -30,7 +30,7 @@ async function postStreamFromBrowser(page: any, message: string): Promise<{ stat
   try {
     return await page.evaluate(
       async ({ msg, convId }: { msg: string; convId: number }) => {
-        const res = await fetch('/api/chat/stream', {
+        const res = await fetch('/api/v1/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: msg, document_ids: [], conversation_id: convId }),
@@ -55,7 +55,7 @@ function parseSseEvents(body: string): { event: string; data: unknown }[] {
   });
 }
 
-test('POST /api/chat/stream 错误路径应返回 event: error 且 data 含 error 字符串', async ({ page }) => {
+test('POST /api/v1/chat/stream 错误路径应返回 event: error 且 data 含 error 字符串', async ({ page }) => {
   test.setTimeout(30_000);
 
   // 清空默认模型 api_key（本机配置了真实 key 时 preflight 会放行，需主动
@@ -67,7 +67,7 @@ test('POST /api/chat/stream 错误路径应返回 event: error 且 data 含 erro
 
     // 删除 X-E2E-Test header，强制后端走真实 LLM preflight（api_key 已清空 →
     // #45 preflight 拒绝 → error + done SSE）。这是 SSE 错误路径的契约测试。
-    await page.route('**/api/chat/stream', async (route) => {
+    await page.route('**/api/v1/chat/stream', async (route) => {
       const headers = { ...route.request().headers() };
       delete headers['x-e2e-test'];
       delete headers['X-E2E-Test'];

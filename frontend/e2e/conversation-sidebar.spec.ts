@@ -13,7 +13,7 @@ import { test, expect, type Page } from '@playwright/test';
  *  4. 切换会话 → 消息区清空 + 切回原会话恢复历史。
  *
  * 用例串行 + 固定 client key（X-Client-Id）；会话经 API 直建/清理。
- * 涉及真实 chat 流时使用 page.route 拦截 /api/chat/stream 返回受控 SSE，
+ * 涉及真实 chat 流时使用 page.route 拦截 /api/v1/chat/stream 返回受控 SSE，
  * 绕开 bge-m3 embedding 与真实 LLM 调用，确保测试在本地稳定运行。
  */
 

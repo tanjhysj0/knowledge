@@ -183,7 +183,7 @@ cleanupTest.describe('上传与索引分离 - E2E (#63)', () => {
         const doc = docsBody.items.find((d) => d.filename === filename);
         if (!doc) throw new Error(`ready 的小说未出现在默认列表: ${filename}`);
 
-        const streamRes = await fetch('/api/chat/stream', {
+        const streamRes = await fetch('/api/v1/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

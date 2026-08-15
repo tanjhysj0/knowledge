@@ -56,7 +56,8 @@ npm run dev
 | POST | /api/documents/upload | 上传文档 |
 | GET | /api/documents | 列出文档 |
 | DELETE | /api/documents/{id} | 删除文档 |
-| POST | /api/chat/stream | 流式对话 |
+| POST | /api/v1/chat | 聊天问答（非流式） |
+| POST | /api/v1/chat/stream | 流式对话 |
 
 ## 项目结构
 

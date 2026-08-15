@@ -356,11 +356,11 @@ test.describe('Chat Page - E2E', () => {
   });
 
   test('应展示 RAG 检索来源（mock SSE done 携带 sources）', async ({ page }) => {
-    // Issue #33：通过 page.route 拦截 /api/chat/stream，让 done 事件携带
+    // Issue #33：通过 page.route 拦截 /api/v1/chat/stream，让 done 事件携带
     // sources=['doc_1']，验证前端能解析为文件名 + 渲染来源区。
     // MockLLMProvider 默认会调用真实 LLM（无 key 会失败），但 SSE 由我们手写
     // 完全绕开 LLM。
-    await page.route('**/api/chat/stream', async (route) => {
+    await page.route('**/api/v1/chat/stream', async (route) => {
       const body = `event: message\ndata: {"content":"基于文档的答案"}\n\nevent: done\ndata: {"sources":["doc_1"]}\n\n`;
       await route.fulfill({
         status: 200,
@@ -391,7 +391,7 @@ test.describe('Chat Page - E2E', () => {
   test('多文档 sources 应按后端顺序去重展示', async ({ page }) => {
     // Issue #33：SSE done 携带多个 doc_N（含重复）时，前端按后端首次出现
     // 顺序去重展示；doc_N 未在 GET /api/documents 找到时显示原始 token。
-    await page.route('**/api/chat/stream', async (route) => {
+    await page.route('**/api/v1/chat/stream', async (route) => {
       const body = `event: message\ndata: {"content":"answer"}\n\nevent: done\ndata: {"sources":["doc_1","doc_2","doc_1"]}\n\n`;
       await route.fulfill({
         status: 200,
@@ -417,7 +417,7 @@ test.describe('Chat Page - E2E', () => {
 
   test('空 sources 时不渲染来源区', async ({ page }) => {
     // Issue #33：未命中（sources=[]）时前端不显示来源区。
-    await page.route('**/api/chat/stream', async (route) => {
+    await page.route('**/api/v1/chat/stream', async (route) => {
       const body = `event: message\ndata: {"content":"general answer"}\n\nevent: done\ndata: {"sources":[]}\n\n`;
       await route.fulfill({
         status: 200,

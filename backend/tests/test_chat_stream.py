@@ -1,4 +1,4 @@
-"""Tests for /api/chat/stream SSE behavior.
+"""Tests for /api/v1/chat/stream SSE behavior.
 
 Verifies that the streaming endpoint emits clean SSE events with separate
 'thinking' and 'message' kinds, and that the persisted ChatMessage content
@@ -8,8 +8,8 @@ import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.api import chat as chat_module
-from app.api.chat import chat_stream
+from app.api.v1 import chat as chat_module
+from app.api.v1.chat import chat_stream
 from app.models.schemas import ChatRequest
 from app.services.chat import stream_answer
 from app.services.llm import reset_providers
@@ -27,7 +27,7 @@ def reset_provider_instances():
 def mock_rag_retrieve():
     """默认让 :meth:`RAGService.aretrieve` 返回 ``[]``。
 
-    test_chat_stream 通过 ``/api/chat/stream`` endpoint 调真 ``stream_answer``，
+    test_chat_stream 通过 ``/api/v1/chat/stream`` endpoint 调真 ``stream_answer``，
     不需要真加载 bge-m3（#32）。命中场景的测试可以显式 patch 覆盖。
     """
     with patch.object(
@@ -38,7 +38,7 @@ def mock_rag_retrieve():
 
 @pytest.fixture(autouse=True)
 def pass_llm_preflight(monkeypatch):
-    """``#45`` 默认让 ``is_llm_configured`` 在 ``app.api.chat`` 作用域内通过，
+    """``#45`` 默认让 ``is_llm_configured`` 在 ``app.api.v1.chat`` 作用域内通过，
     避免 chat_stream 测试被 preflight 提前拒绝。需要验证 preflight 行为的测试
     必须在显式 patch 中覆盖本 fixture 的效果。
     """
@@ -119,7 +119,7 @@ class _EmptyScalars:
 
 
 class TestChatStreamSSE:
-    """Verifies that /api/chat/stream emits a clean SSE stream."""
+    """Verifies that /api/v1/chat/stream emits a clean SSE stream."""
 
     async def _drive(self, llm_chunks, document_ids=None, conversation_id=99):
         async def fake_stream(messages):
@@ -220,6 +220,52 @@ class TestStreamAnswerStrategies:
         mock_aretrieve.assert_awaited_once_with(
             question="Q", document_ids=[], history=[], strategies=["dense"]
         )
+
+
+class TestV1EndpointStrategyWhitelist:
+    """#76：v1 端点接入层显式传入全量五路检索策略白名单。"""
+
+    @pytest.mark.asyncio
+    async def test_stream_endpoint_passes_full_whitelist(self):
+        from types import SimpleNamespace
+
+        async def fake_stream(**kwargs):
+            yield {"event": "done", "data": json.dumps({"sources": []})}
+
+        payload = ChatRequest(message="Hi", document_ids=[], conversation_id=99)
+        request = MagicMock(headers={})
+        db = _FakeSession(conversations=[SimpleNamespace(id=99, message_count=0)])
+
+        with patch.object(
+            chat_module.chat_service, "stream_answer", side_effect=fake_stream
+        ) as mock_stream:
+            response = await chat_module.chat_stream(
+                request=request, payload=payload, db=db
+            )
+            await _collect_sse_dicts(response.body_iterator)
+
+        mock_stream.assert_called_once()
+        _, kwargs = mock_stream.call_args
+        assert kwargs["strategies"] == ["dense", "bm25", "entity", "event", "chapter"]
+
+    @pytest.mark.asyncio
+    async def test_chat_endpoint_passes_full_whitelist(self):
+        from types import SimpleNamespace
+
+        payload = ChatRequest(message="Hi", document_ids=[], conversation_id=99)
+        request = MagicMock(headers={})
+        db = _FakeSession(conversations=[SimpleNamespace(id=99, message_count=0)])
+
+        with patch.object(
+            chat_module.chat_service,
+            "ask",
+            new=AsyncMock(return_value={"answer": "ok", "sources": []}),
+        ) as mock_ask:
+            await chat_module.chat(request=request, payload=payload, db=db)
+
+        mock_ask.assert_called_once()
+        _, kwargs = mock_ask.call_args
+        assert kwargs["strategies"] == ["dense", "bm25", "entity", "event", "chapter"]
 
 
 class TestChatStreamPersistedContent:

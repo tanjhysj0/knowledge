@@ -186,7 +186,7 @@ cleanupTest.describe('ChatPage 会话上下文隔离 - E2E (#36)', () => {
 
   cleanupTest('缺失 conversation_id 应被 Pydantic 422 拒绝（不写入任何消息）', async ({ page }) => {
     // 直接用 page.request 发裸请求绕过前端 ChatPage，验证 Pydantic 拦截
-    const res = await page.request.post('/api/chat/stream', {
+    const res = await page.request.post('/api/v1/chat/stream', {
       headers: { 'Content-Type': 'application/json' },
       data: JSON.stringify({ message: 'no conv id', document_ids: [] }),
       failOnStatusCode: false,
@@ -195,7 +195,7 @@ cleanupTest.describe('ChatPage 会话上下文隔离 - E2E (#36)', () => {
   });
 
   cleanupTest('不存在的 conversation_id 应返回 404（ask 端点）', async ({ page }) => {
-    const res = await page.request.post('/api/chat', {
+    const res = await page.request.post('/api/v1/chat', {
       headers: { 'Content-Type': 'application/json' },
       data: JSON.stringify({
         message: 'orphan',
