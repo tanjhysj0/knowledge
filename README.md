@@ -22,7 +22,7 @@ docker-compose up -d
 
 验证服务启动：
 
-- PostgreSQL (pgvector): localhost:5432
+- PostgreSQL (pgvector): localhost:55432
 
 ### 2. 配置环境变量
 
