@@ -117,7 +117,6 @@ async def ask(
     search_results = await rag_service.aretrieve(
         question=question,
         document_ids=await _filter_ready_document_ids(db, document_ids),
-        top_k=5,
         history=history,
     )
     logger.info(
@@ -220,7 +219,6 @@ async def stream_answer(
         search_results = await rag_service.aretrieve(
             question=question,
             document_ids=await _filter_ready_document_ids(db, document_ids),
-            top_k=5,
             # #66：当前问题之前的历史（context_messages 末尾刚 append 了
             # 当前问题，切掉后传给 planner 做多轮指代消解）。
             history=context_messages[:-1],

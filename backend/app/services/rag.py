@@ -199,7 +199,7 @@ Please answer this question based on your general knowledge."""
         self,
         question: str,
         document_ids: List[int],
-        top_k: int = 5,
+        top_k: Optional[int] = None,
         history: Optional[List[Dict[str, str]]] = None,
     ) -> List[Dict[str, Any]]:
         """公开的检索入口：跑混合检索管线，返回旧格式命中 dict 列表。
