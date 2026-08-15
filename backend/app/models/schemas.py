@@ -185,3 +185,48 @@ class LLMStatusResponse(BaseModel):
     provider: str
     configured: bool
     reason: str
+
+
+# ----------------- 图谱（#80） -----------------
+
+class GraphRelationCreate(BaseModel):
+    """``POST /api/graph/triples`` 请求体：写入三元组（同步实体表）。"""
+
+    document_id: int
+    subject: str
+    relation: str
+    object: str
+    chunk_index: int = 0
+    content: str = ""
+
+
+class GraphRelationResponse(BaseModel):
+    """三元组响应：subject/relation/object 与来源 chunk 引用（证据回溯）。"""
+
+    id: int
+    document_id: int
+    subject: str
+    relation: str
+    object: str
+    chunk_index: int
+    content: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GraphNeighbor(BaseModel):
+    """一跳邻居：邻居实体名、关系、方向（out=出边/in=入边）与源文本块引用。"""
+
+    name: str
+    relation: str
+    direction: Literal["out", "in"]
+    chunk_index: int
+    content: str
+
+
+class GraphNeighborsResponse(BaseModel):
+    """``GET /api/graph/neighbors`` 响应：查询实体及其一跳邻居列表。"""
+
+    name: str
+    neighbors: list[GraphNeighbor] = []

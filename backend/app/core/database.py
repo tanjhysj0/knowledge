@@ -58,6 +58,8 @@ async def init_db():
             EventAnchor,
             VectorChunk,
         )
+        # #80：GraphRAG 图谱表（实体表 + 三元组关系表）随 create_all 建表。
+        from app.models.graph import GraphEntity, GraphRelation  # noqa: F401
 
         async with engine.begin() as conn:
             # #71：dense 向量存储迁至 pgvector——扩展必须先于 create_all：

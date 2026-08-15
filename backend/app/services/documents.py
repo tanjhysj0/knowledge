@@ -222,6 +222,16 @@ async def _clear_metadata_indexes_quietly(db: AsyncSession, document_id: int) ->
         logger.warning("metadata index cleanup for document %s failed: %s", document_id, exc)
 
 
+async def _clear_graph_indexes_quietly(db: AsyncSession, document_id: int) -> None:
+    """#80：尽力清理小说的图谱数据（删除/重试路径，失败不阻塞主流程）。"""
+    try:
+        from app.services.graph import clear_graph_indexes
+
+        await clear_graph_indexes(db, document_id)
+    except Exception as exc:  # noqa: BLE001 — 清理失败可容忍
+        logger.warning("graph cleanup for document %s failed: %s", document_id, exc)
+
+
 async def _mark_failed(db: AsyncSession, document_id: int, error: Exception) -> None:
     """把小说标记为 ``failed`` 并记录错误信息；已被删除则忽略任务结果。
 
@@ -229,6 +239,8 @@ async def _mark_failed(db: AsyncSession, document_id: int, error: Exception) -> 
     """
     _delete_vectors_quietly(document_id)
     await _clear_metadata_indexes_quietly(db, document_id)
+    # #80：图数据随失败残留一并清理，重建时重写。
+    await _clear_graph_indexes_quietly(db, document_id)
     document = await _load_document(db, document_id)
     if document is None:
         return
@@ -299,12 +311,17 @@ async def _save_document_text(document_id: int, text_content: str) -> None:
         raise DocumentStoreError(f"Failed to store document text: {exc}") from exc
 
 
-async def _process_document_index(db: AsyncSession, document_id: int) -> None:
+async def _process_document_index(
+    db: AsyncSession, document_id: int, e2e_mock: bool = False
+) -> None:
     """后台索引主流程：解析 → 分块 → embedding → 向量写入，逐阶段写回进度。
 
     成功：``ready``/100；失败：``failed`` + ``error_message``。小说在
     处理中被删除时静默退出（忽略任务结果），刚写入的向量一并清理，
     不产生孤儿数据（#63）。
+
+    #80：``e2e_mock=True`` 时图谱抽取使用 :class:`MockLLMProvider`
+    （由路由层解析 ``X-E2E-Test`` 头透传），保证 E2E 下图数据确定性可断言。
     """
     document = await _load_document(db, document_id)
     if document is None:
@@ -347,6 +364,22 @@ async def _process_document_index(db: AsyncSession, document_id: int) -> None:
             logger.warning(
                 "metadata indexes for document %s failed: %s", document_id, exc
             )
+
+        # #80：图谱三元组抽取与写入。抽取失败静默降级：文档状态不受影响
+        # （仍 ready），图数据为空且不报错；E2E mock 下确定性可断言。
+        try:
+            from app.services.graph import build_graph_indexes
+
+            llm = None
+            if e2e_mock:
+                from app.services.mock_llm import MockLLMProvider
+
+                llm = MockLLMProvider()
+            await build_graph_indexes(db, document_id, chunks, llm=llm)
+        except Exception as exc:  # noqa: BLE001 — 图构建失败不阻断 ready
+            logger.warning(
+                "graph indexes for document %s failed: %s", document_id, exc
+            )
     except Exception as exc:  # noqa: BLE001 — 任何阶段失败都转为 failed 状态
         await _mark_failed(db, document_id, exc)
         return
@@ -360,8 +393,11 @@ async def _process_document_index(db: AsyncSession, document_id: int) -> None:
     await _update_progress(db, document, status="ready", progress=100)
 
 
-async def process_document_index(document_id: int) -> None:
+async def process_document_index(document_id: int, e2e_mock: bool = False) -> None:
     """后台任务入口：用独立 DB 会话完成索引处理（#63）。
+
+    #80：``e2e_mock`` 由路由层解析 ``X-E2E-Test`` 头透传，使 E2E 下
+    图谱抽取走 MockLLMProvider（确定性三元组）。
 
     会话级异常不向外传播（后台任务无调用方）：记录日志，残留的
     ``processing`` 状态由启动恢复重置并重新入队。
@@ -369,7 +405,7 @@ async def process_document_index(document_id: int) -> None:
     session_maker = get_session_maker()
     try:
         async with session_maker() as db:
-            await _process_document_index(db, document_id)
+            await _process_document_index(db, document_id, e2e_mock=e2e_mock)
     except Exception as exc:  # noqa: BLE001 — 后台任务兜底
         logger.exception("document %s background indexing failed: %s", document_id, exc)
 
@@ -395,6 +431,8 @@ async def requeue_document_index(
     _delete_vectors_quietly(document_id)
     # #66：辅助索引（BM25/章节/实体/事件）随失败残留一并清理，重建时重写。
     await _clear_metadata_indexes_quietly(db, document_id)
+    # #80：图数据随失败残留一并清理，重建时重写。
+    await _clear_graph_indexes_quietly(db, document_id)
 
     document.status = "pending"
     document.progress = 0
@@ -427,6 +465,7 @@ async def recover_stale_processing_documents(db: AsyncSession) -> List[int]:
         for doc_id in stale_ids:
             _delete_vectors_quietly(doc_id)
             await _clear_metadata_indexes_quietly(db, doc_id)
+            await _clear_graph_indexes_quietly(db, doc_id)
 
     pending_result = await db.execute(
         select(Document.id).where(Document.status == "pending")
@@ -574,6 +613,9 @@ async def delete_document(
         await clear_metadata_indexes(db, document_id)
     except Exception:
         pass
+
+    # #80：图数据随删除清理；失败静默忽略（沿用向量删除契约）。
+    await _clear_graph_indexes_quietly(db, document_id)
 
     if os.path.exists(document.file_path):
         os.remove(document.file_path)

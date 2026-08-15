@@ -49,7 +49,7 @@ class TestUploadRouteCoverForwarding:
             new=AsyncMock(return_value=_uploaded_document()),
         ) as mock_upload:
             await documents_api.upload_document(
-                file=file, cover=cover, db=object(),
+                request=None, file=file, cover=cover, db=object(),
                 background_tasks=_fake_background_tasks(),
             )
 
@@ -68,7 +68,7 @@ class TestUploadRouteCoverForwarding:
             new=AsyncMock(return_value=_uploaded_document()),
         ) as mock_upload:
             await documents_api.upload_document(
-                file=file, cover=None, db=object(),
+                request=None, file=file, cover=None, db=object(),
                 background_tasks=_fake_background_tasks(),
             )
 
@@ -86,7 +86,7 @@ class TestUploadRouteCoverForwarding:
         ) as mock_upload:
             with pytest.raises(HTTPException) as exc:
                 await documents_api.upload_document(
-                    file=file, cover=cover, db=object(),
+                    request=None, file=file, cover=cover, db=object(),
                     background_tasks=_fake_background_tasks(),
                 )
 
@@ -105,7 +105,7 @@ class TestUploadRouteCoverForwarding:
         ) as mock_upload:
             with pytest.raises(HTTPException) as exc:
                 await documents_api.upload_document(
-                    file=file, cover=cover, db=object(),
+                    request=None, file=file, cover=cover, db=object(),
                     background_tasks=_fake_background_tasks(),
                 )
 
@@ -127,14 +127,40 @@ class TestUploadRouteBackgroundIndexing:
             new=AsyncMock(return_value=_uploaded_document(42)),
         ):
             result = await documents_api.upload_document(
-                file=file, cover=None, db=object(),
+                request=None, file=file, cover=None, db=object(),
+                background_tasks=background_tasks,
+            )
+
+        # #80：无 E2E 头时 e2e_mock 为 False。
+        background_tasks.add_task.assert_called_once_with(
+            document_service.process_document_index, 42, e2e_mock=False
+        )
+        assert result.id == 42
+
+    @pytest.mark.asyncio
+    async def test_e2e_header_forwards_mock_flag(self):
+        """#80：携带 ``X-E2E-Test: true`` 时后台任务收到 ``e2e_mock=True``。"""
+        from tests.test_mock_provider import _make_request
+
+        file = _FakeUploadFile(filename="novel.txt", content=b"novel body")
+        background_tasks = _fake_background_tasks()
+
+        with patch.object(
+            document_service,
+            "upload_document",
+            new=AsyncMock(return_value=_uploaded_document(42)),
+        ):
+            await documents_api.upload_document(
+                request=_make_request({"x-e2e-test": "true"}),
+                file=file,
+                cover=None,
+                db=object(),
                 background_tasks=background_tasks,
             )
 
         background_tasks.add_task.assert_called_once_with(
-            document_service.process_document_index, 42
+            document_service.process_document_index, 42, e2e_mock=True
         )
-        assert result.id == 42
 
     @pytest.mark.asyncio
     async def test_does_not_enqueue_when_cover_invalid(self):
@@ -147,7 +173,7 @@ class TestUploadRouteBackgroundIndexing:
         ):
             with pytest.raises(HTTPException):
                 await documents_api.upload_document(
-                    file=file, cover=cover, db=object(),
+                    request=None, file=file, cover=cover, db=object(),
                     background_tasks=background_tasks,
                 )
 
@@ -191,11 +217,15 @@ class TestReindexRoute:
             new=AsyncMock(return_value=_uploaded_document(42)),
         ):
             result = await documents_api.reindex_document(
-                document_id=42, db=object(), background_tasks=background_tasks
+                request=None,
+                document_id=42,
+                db=object(),
+                background_tasks=background_tasks,
             )
 
+        # #80：无 E2E 头时 e2e_mock 为 False。
         background_tasks.add_task.assert_called_once_with(
-            document_service.process_document_index, 42
+            document_service.process_document_index, 42, e2e_mock=False
         )
         assert result.id == 42
 
@@ -208,6 +238,7 @@ class TestReindexRoute:
         ):
             with pytest.raises(HTTPException) as exc:
                 await documents_api.reindex_document(
+                    request=None,
                     document_id=99,
                     db=object(),
                     background_tasks=_fake_background_tasks(),
@@ -230,6 +261,7 @@ class TestReindexRoute:
         ):
             with pytest.raises(HTTPException) as exc:
                 await documents_api.reindex_document(
+                    request=None,
                     document_id=42,
                     db=object(),
                     background_tasks=background_tasks,

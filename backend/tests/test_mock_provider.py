@@ -8,6 +8,7 @@ from app.services.llm import OpenAIProvider, get_llm_provider
 from app.services.mock_llm import (
     E2E_MOCK_THINKING_HEADER,
     MOCK_CHUNK_SIZE,
+    MOCK_EXTRACT_TRIPLES_RESPONSE,
     MOCK_LLM_ANSWER,
     MOCK_PLAN_RESPONSE,
     MOCK_THINKING_PREFIX,
@@ -56,6 +57,15 @@ class TestMockLLMProvider:
         provider = MockLLMProvider()
         result = await provider.chat([{"role": "user", "content": "Hi"}])
         assert result == MOCK_LLM_ANSWER
+
+    @pytest.mark.asyncio
+    async def test_chat_extract_triples_returns_fixed_triples(self):
+        """#80：抽取 prompt 返回确定性三元组（E2E 图数据可断言）。"""
+        provider = MockLLMProvider()
+        result = await provider.chat(
+            [{"role": "user", "content": "[EXTRACT_TRIPLES]\n片段：..."}]
+        )
+        assert json.loads(result) == MOCK_EXTRACT_TRIPLES_RESPONSE
 
     @pytest.mark.asyncio
     async def test_chat_with_thinking_prefixes_think_block(self):

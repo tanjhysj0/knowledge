@@ -26,6 +26,13 @@ MOCK_PLAN_RESPONSE = {
 }
 MOCK_PLAN_QUERIES_RESPONSE = {"queries": ["mock refinement query"]}
 MOCK_EXTRACT_EVENTS_RESPONSE = {"events": []}
+# #80：图谱三元组抽取的确定性 mock 输出（E2E 可断言图数据）。
+MOCK_EXTRACT_TRIPLES_RESPONSE = {
+    "triples": [
+        {"subject": "张三", "relation": "是", "object": "主角", "chunk": 0},
+        {"subject": "李四", "relation": "击败", "object": "张三", "chunk": 0},
+    ]
+}
 
 
 class MockLLMProvider:
@@ -69,6 +76,9 @@ class MockLLMProvider:
             return json.dumps(MOCK_PLAN_QUERIES_RESPONSE, ensure_ascii=False)
         if content.startswith("[EXTRACT_EVENTS]"):
             return json.dumps(MOCK_EXTRACT_EVENTS_RESPONSE, ensure_ascii=False)
+        if content.startswith("[EXTRACT_TRIPLES]"):
+            # #80：返回固定三元组，供 E2E 对图数据表/查询接口做确定性断言。
+            return json.dumps(MOCK_EXTRACT_TRIPLES_RESPONSE, ensure_ascii=False)
         if self._include_thinking:
             return MOCK_THINKING_PREFIX + MOCK_LLM_ANSWER
         return MOCK_LLM_ANSWER

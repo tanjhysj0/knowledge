@@ -8,6 +8,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     UploadFile,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.models.schemas import DocumentResponse, PaginatedDocumentsResponse
+from app.services.llm import is_e2e_mock_request
 from app.services.documents import (
     ALLOWED_COVER_EXTS,
     CoverTooLargeError,
@@ -33,6 +35,7 @@ _ALLOWED_FILE_TYPES = {"txt", "md", "pdf", "docx"}
 
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     cover: Optional[UploadFile] = File(None),
@@ -48,6 +51,9 @@ async def upload_document(
 
     #63：上传与索引分离——落库（pending/0）后立即返回，解析/分块/embedding/
     向量写入整体移入后台任务。
+
+    #80：``X-E2E-Test`` 头在路由层解析为 ``e2e_mock`` 透传后台任务，
+    使 E2E 下图谱抽取走 MockLLMProvider（确定性三元组）。
     """
     if file.size and file.size > settings.max_file_size:
         raise HTTPException(status_code=400, detail="File too large")
@@ -89,7 +95,12 @@ async def upload_document(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # #63：索引处理移入后台任务；响应只等落库（秒级返回）。
-    background_tasks.add_task(document_service.process_document_index, document.id)
+    # #80：E2E mock 标志由请求头解析（后台任务无 request 上下文）。
+    background_tasks.add_task(
+        document_service.process_document_index,
+        document.id,
+        e2e_mock=is_e2e_mock_request(request),
+    )
     return document
 
 
@@ -181,6 +192,7 @@ async def delete_document(
 @router.post("/{document_id}/reindex", response_model=DocumentResponse)
 async def reindex_document(
     document_id: int,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
@@ -188,6 +200,8 @@ async def reindex_document(
 
     仅 failed 可重试（其余状态 409）；成功后经 BackgroundTasks 入队与
     首次上传相同的处理链路，进度照常写回小说表。
+
+    #80：E2E mock 标志与上传端点一致，由请求头解析透传。
     """
     try:
         document = await document_service.requeue_document_index(
@@ -199,5 +213,9 @@ async def reindex_document(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     # #65：与首次上传共用同一后台处理链路。
-    background_tasks.add_task(document_service.process_document_index, document.id)
+    background_tasks.add_task(
+        document_service.process_document_index,
+        document.id,
+        e2e_mock=is_e2e_mock_request(request),
+    )
     return document

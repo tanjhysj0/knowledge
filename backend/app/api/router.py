@@ -5,6 +5,7 @@ from app.api import (
     conversations,
     covers,
     documents,
+    graph,
     health,
     llm_status,
     models,
@@ -29,3 +30,5 @@ router.include_router(
 )
 router.include_router(models.router, tags=["models"])
 router.include_router(llm_status.router, tags=["llm"])
+# #80：图谱查询/写入（一跳邻居/按文档查/写入三元组）
+router.include_router(graph.router, prefix="/api/graph", tags=["graph"])
