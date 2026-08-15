@@ -5,13 +5,15 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # Embedding（默认 bge-m3 中英多语言 / dim=1024）
-    embedding_provider: str = "local"  # "local" = sentence-transformers
+    embedding_provider: str = "local"  # "local" = sentence-transformers；"http" = 远端 Infinity 服务
     embedding_model: str = "BAAI/bge-m3"
     embedding_dim: int = 1024
+    # "http" 模式下的远端服务地址（Infinity，OpenAI 兼容 /embeddings）。
+    embedding_api_url: str = "http://localhost:7997"
 
     # PostgreSQL
     postgres_host: str = "localhost"
-    postgres_port: int = 5432
+    postgres_port: int = 55432
     postgres_user: str = "docqa"
     postgres_password: str = "docqa"
     postgres_db: str = "docqa"

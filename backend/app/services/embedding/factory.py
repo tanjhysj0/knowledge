@@ -23,8 +23,10 @@ def get_embedding_provider() -> EmbeddingProvider:
     - ``"mock"`` 返回 :class:`app.services.embedding.mock.MockEmbeddingProvider`，
       用于 E2E 测试避免加载 bge-m3。
     - ``"local"``（默认）返回 :class:`LocalSentenceTransformerProvider`。
+    - ``"http"`` 返回 :class:`app.services.embedding.remote.RemoteEmbeddingProvider`，
+      转发到 docker-compose 里的 Infinity 服务（OpenAI 兼容 /embeddings）。
 
-    如需新增远端实现（例如 OpenAI text-embedding-3），在此处追加分支即可。
+    如需其他远端实现，在此处追加分支即可。
     """
     global _provider_instance
     if _provider_instance is None:
@@ -37,6 +39,13 @@ def get_embedding_provider() -> EmbeddingProvider:
                     from app.services.embedding.mock import MockEmbeddingProvider
 
                     _provider_instance = MockEmbeddingProvider(
+                        model_name=settings.embedding_model,
+                        dim=settings.embedding_dim,
+                    )
+                elif settings.embedding_provider == "http":
+                    from app.services.embedding.remote import RemoteEmbeddingProvider
+
+                    _provider_instance = RemoteEmbeddingProvider(
                         model_name=settings.embedding_model,
                         dim=settings.embedding_dim,
                     )

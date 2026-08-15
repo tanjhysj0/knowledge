@@ -21,6 +21,7 @@ import os
 from typing import List
 from unittest.mock import MagicMock, patch
 
+import httpx
 import numpy as np
 import pytest
 
@@ -28,6 +29,7 @@ from app.core.config import get_settings
 from app.services.embedding import (
     EmbeddingProvider,
     LocalSentenceTransformerProvider,
+    RemoteEmbeddingProvider,
     get_embedding_provider,
     reset_embedding_provider,
 )
@@ -284,10 +286,14 @@ class TestConfigEmbeddingFields:
     """``Settings`` 暴露 ``embedding_*`` 配置。"""
 
     def test_settings_default_embedding_model_is_bge_m3(self):
-        settings = get_settings()
+        """代码默认值：``local`` / bge-m3 / 1024（不读 .env，测试独立性）。"""
+        from app.core.config import Settings
+
+        settings = Settings(_env_file=None)
         assert settings.embedding_provider == "local"
         assert settings.embedding_model == "BAAI/bge-m3"
         assert settings.embedding_dim == 1024
+        assert settings.embedding_api_url == "http://localhost:7997"
 
     def test_settings_accepts_overrides_via_env(self, monkeypatch):
         """``EMBEDDING_MODEL`` / ``EMBEDDING_DIM`` 环境变量可被读取。"""
@@ -300,3 +306,110 @@ class TestConfigEmbeddingFields:
         )
         assert s.embedding_model == "custom/model"
         assert s.embedding_dim == 512
+
+
+class TestRemoteEmbeddingProvider:
+    """``RemoteEmbeddingProvider``（Infinity / OpenAI 兼容 /embeddings）。"""
+
+    @staticmethod
+    def _fake_response(payload, status_code=200):
+        response = MagicMock()
+        response.status_code = status_code
+        response.json.return_value = payload
+        response.raise_for_status = MagicMock()
+        return response
+
+    def test_dim_and_model_name_default_to_bge_m3(self):
+        provider = RemoteEmbeddingProvider()
+        assert provider.dim == 1024
+        assert provider.model_name == "BAAI/bge-m3"
+
+    def test_constructor_overrides_model_dim_and_url(self):
+        provider = RemoteEmbeddingProvider(
+            model_name="custom/model", dim=384, api_url="http://example.com/"
+        )
+        assert provider.dim == 384
+        assert provider.model_name == "custom/model"
+
+    def test_embed_texts_posts_openai_compatible_body(self):
+        provider = RemoteEmbeddingProvider(dim=4, api_url="http://embed:7997")
+        payload = {
+            "data": [
+                {"embedding": [0.1, 0.2, 0.3, 0.4], "index": 0},
+                {"embedding": [0.5, 0.6, 0.7, 0.8], "index": 1},
+            ]
+        }
+        with patch(
+            "app.services.embedding.remote.httpx.post",
+            return_value=self._fake_response(payload),
+        ) as post:
+            vectors = provider.embed_texts(["a", "b"])
+
+        assert vectors == [[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]]
+        post.assert_called_once()
+        kwargs = post.call_args.kwargs
+        assert kwargs["json"] == {"model": "BAAI/bge-m3", "input": ["a", "b"]}
+        assert post.call_args.args[0] == "http://embed:7997/embeddings"
+
+    def test_embed_texts_empty_input_short_circuits(self):
+        provider = RemoteEmbeddingProvider()
+        with patch("app.services.embedding.remote.httpx.post") as post:
+            assert provider.embed_texts([]) == []
+            post.assert_not_called()
+
+    def test_dim_mismatch_raises_runtime_error(self):
+        provider = RemoteEmbeddingProvider(dim=8)
+        payload = {"data": [{"embedding": [0.1, 0.2], "index": 0}]}
+        with patch(
+            "app.services.embedding.remote.httpx.post",
+            return_value=self._fake_response(payload),
+        ):
+            with pytest.raises(RuntimeError, match="维度"):
+                provider.embed_texts(["a"])
+
+    def test_count_mismatch_raises_runtime_error(self):
+        provider = RemoteEmbeddingProvider(dim=2)
+        payload = {"data": [{"embedding": [0.1, 0.2], "index": 0}]}
+        with patch(
+            "app.services.embedding.remote.httpx.post",
+            return_value=self._fake_response(payload),
+        ):
+            with pytest.raises(RuntimeError, match="条"):
+                provider.embed_texts(["a", "b"])
+
+    def test_http_error_raises(self):
+        provider = RemoteEmbeddingProvider(dim=2)
+        response = self._fake_response({"detail": "down"}, status_code=500)
+        response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "500", request=MagicMock(), response=MagicMock()
+        )
+        with patch(
+            "app.services.embedding.remote.httpx.post", return_value=response
+        ):
+            with pytest.raises(httpx.HTTPStatusError):
+                provider.embed_texts(["a"])
+
+    def test_trailing_slash_in_api_url_stripped(self):
+        provider = RemoteEmbeddingProvider(dim=2, api_url="http://embed:7997/")
+        payload = {"data": [{"embedding": [0.1, 0.2], "index": 0}]}
+        with patch(
+            "app.services.embedding.remote.httpx.post",
+            return_value=self._fake_response(payload),
+        ) as post:
+            provider.embed_texts(["a"])
+        assert post.call_args.args[0] == "http://embed:7997/embeddings"
+
+    def test_factory_http_branch_returns_remote_provider(self):
+        """``settings.embedding_provider == "http"`` 时工厂返回远端实现。"""
+        reset_embedding_provider()
+        with patch("app.services.embedding.factory.get_settings") as mock_gs:
+            fake_settings = MagicMock()
+            fake_settings.embedding_provider = "http"
+            fake_settings.embedding_model = "BAAI/bge-m3"
+            fake_settings.embedding_dim = 1024
+            fake_settings.embedding_api_url = "http://embed:7997"
+            mock_gs.return_value = fake_settings
+            provider = get_embedding_provider()
+
+        assert isinstance(provider, RemoteEmbeddingProvider)
+        assert provider.model_name == "BAAI/bge-m3"

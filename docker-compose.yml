@@ -1,4 +1,5 @@
 # #71：dense 向量存储迁至 PostgreSQL/pgvector，仅保留 postgres 服务。
+# embedding：Infinity 独立 embedding 服务（BAAI/bge-m3 常驻，后端不再进程内加载模型）。
 services:
   postgres:
     container_name: docqa-postgres
@@ -9,7 +10,7 @@ services:
       POSTGRES_PASSWORD: docqa
       POSTGRES_DB: docqa
     ports:
-      - "5432:5432"
+      - "55432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -17,6 +18,35 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  embedding:
+    container_name: docqa-embedding
+    # 0.0.75 是支持 linux/arm64 的最新版本（Apple Silicon 原生运行）；
+    # latest(0.0.77) 目前只有 amd64 镜像。
+    image: michaelf34/infinity:0.0.75
+    # 镜像 entrypoint 即 infinity_emb，直接传 v2 子命令参数。
+    command: v2 --model-id BAAI/bge-m3 --port 7997
+    environment:
+      # 复用宿主机已有的 bge-m3 缓存（~/.cache/huggingface），离线模式
+      # 零下载启动；未缓存过时去掉 HF_HUB_OFFLINE 让容器自行下载。
+      HF_HOME: /app/.cache/huggingface
+      HF_HUB_OFFLINE: 1
+    ports:
+      - "7997:7997"
+    volumes:
+      - ${HOME}/.cache/huggingface:/app/.cache/huggingface
+    healthcheck:
+      # 镜像基于 slim 无 curl；用 python urllib 探活 /health。
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:7997/health')
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 120s
+    restart: unless-stopped
 
 volumes:
   postgres_data:
