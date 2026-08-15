@@ -19,6 +19,7 @@ from app.core.database import get_session_maker
 from app.models.retrieval_index import Bm25Chunk, ChapterAnchor, EntityAnchor, EventAnchor
 from app.services.retrieval import RetrievalHit
 from app.services.retrieval.bm25 import tokenize
+from app.services.retrieval.planner import QueryPlan
 
 # 中文/英文章节标题模式：第X章 / 第X节 / 第X回 / Chapter X（X 支持中英数字）。
 _CHAPTER_NO_RE = re.compile(r"第\s*([0-9零一二三四五六七八九十百千]+)\s*[章节回卷部]")
@@ -66,7 +67,13 @@ class _AnchorSessionMixin:
 class ChapterRetriever(_AnchorSessionMixin):
     """章节检索器（策略名 ``chapter``）。"""
 
-    name = "chapter"
+    strategy = "chapter"
+
+    def decorate_query(self, query: str, plan: QueryPlan) -> str:
+        """#74：把 QueryPlan 章节线索拼进检索词（管线不再感知策略名）。"""
+        if plan.chapter_hints:
+            return f"{query} {' '.join(plan.chapter_hints)}"
+        return query
 
     async def retrieve(
         self,
@@ -118,7 +125,7 @@ class ChapterRetriever(_AnchorSessionMixin):
                         chunk_index=chunk.chunk_index,
                         content=chunk.content,
                         score=1.0,
-                        strategy=self.name,
+                        strategy=self.strategy,
                         chapter=anchor.title,
                     )
                     for chunk in chunks[:top_k]
@@ -129,7 +136,13 @@ class ChapterRetriever(_AnchorSessionMixin):
 class EntityRetriever(_AnchorSessionMixin):
     """实体检索器（策略名 ``entity``）——由 QueryPlan 实体线索或 query 词驱动。"""
 
-    name = "entity"
+    strategy = "entity"
+
+    def decorate_query(self, query: str, plan: QueryPlan) -> str:
+        """#74：把 QueryPlan 实体线索拼进检索词（管线不再感知策略名）。"""
+        if plan.entities:
+            return f"{query} {' '.join(plan.entities)}"
+        return query
 
     async def retrieve(
         self,
@@ -164,7 +177,7 @@ class EntityRetriever(_AnchorSessionMixin):
                     chunk_index=anchor.chunk_index,
                     content=anchor.content,
                     score=1.0,
-                    strategy=self.name,
+                    strategy=self.strategy,
                 )
                 for anchor in anchors[:top_k]
             ]
@@ -173,7 +186,13 @@ class EntityRetriever(_AnchorSessionMixin):
 class EventRetriever(_AnchorSessionMixin):
     """事件检索器（策略名 ``event``）——query 词与事件名重叠即命中。"""
 
-    name = "event"
+    strategy = "event"
+
+    def decorate_query(self, query: str, plan: QueryPlan) -> str:
+        """#74：把 QueryPlan 事件线索拼进检索词（管线不再感知策略名）。"""
+        if plan.events:
+            return f"{query} {' '.join(plan.events)}"
+        return query
 
     async def retrieve(
         self,
@@ -212,7 +231,7 @@ class EventRetriever(_AnchorSessionMixin):
                         chunk_index=anchor.chunk_index,
                         content=anchor.content,
                         score=1.0,
-                        strategy=self.name,
+                        strategy=self.strategy,
                     )
                 )
         return hits[:top_k]

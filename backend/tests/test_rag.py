@@ -223,6 +223,49 @@ class TestAretrieve:
         mock_retrieve.assert_awaited_once_with("Q", [1], None, None)
 
 
+class TestRetrieverInjection:
+    """#74：RAGService 检索器集合构造注入；未注入时经装配层默认组装。"""
+
+    def test_init_defaults_retrievers_via_assembly(self):
+        fake = {"dense": object()}
+        with patch("app.services.rag.build_retrievers", return_value=fake) as mock_build, \
+             patch("app.services.rag.VectorStoreService"):
+            rag = RAGService()
+        mock_build.assert_called_once_with()
+        assert rag._retrievers is fake
+
+    def test_init_accepts_injected_retrievers(self):
+        retrievers = {"dense": object()}
+        with patch("app.services.rag.VectorStoreService"):
+            rag = RAGService(retrievers=retrievers)
+        assert rag._retrievers is retrievers
+
+    @pytest.mark.asyncio
+    async def test_retrieve_evidence_forwards_retrievers_to_pipeline(self):
+        """注入的检索器集合透传给管线，契约（top_k/history）不变。"""
+        rag = RAGService.__new__(RAGService)
+        rag._vector_store = MagicMock()
+        rag._request = None
+        retrievers = {"dense": MagicMock()}
+        rag._retrievers = retrievers
+        pack = MagicMock()
+
+        with patch("app.services.retrieval.pipeline.HybridRetrievalPipeline") as mock_cls:
+            mock_cls.return_value.retrieve = AsyncMock(return_value=pack)
+            result = await rag.retrieve_evidence(
+                "Q", [1], top_k=7, history=[{"role": "user", "content": "hi"}]
+            )
+
+        assert result is pack
+        assert rag.last_evidence_pack() is pack
+        _, kwargs = mock_cls.call_args
+        assert kwargs["retrievers"] is retrievers
+        assert kwargs["top_k"] == 7
+        mock_cls.return_value.retrieve.assert_awaited_once_with(
+            "Q", [1], [{"role": "user", "content": "hi"}]
+        )
+
+
 class TestRAGServiceAnswer:
     """``RAGService.answer`` 检索命中/未命中的 prompt 行为。"""
 

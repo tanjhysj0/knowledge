@@ -2,12 +2,16 @@
 
 验证数据流：planner → 五路检索 → RRF 融合 → reranker → agent，以及
 各类降级路径（首个子查询命中即停、单路失败、未知策略跳过）。
+
+#74：检索器集合全部经构造注入；QueryPlan 线索由检索器可选
+``decorate_query`` 钩子自行消费，管线不感知 settings 开关。
 """
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.services.retrieval import RetrievalHit
+from app.services.retrieval.assembly import settings as assembly_settings
 from app.services.retrieval.evidence import EvidencePack
 from app.services.retrieval.pipeline import HybridRetrievalPipeline
 from app.services.retrieval.planner import QueryPlan
@@ -20,9 +24,12 @@ def _hit(doc_id: int, chunk: int, score: float = 0.8) -> RetrievalHit:
     )
 
 
-def _retriever(name: str, hits=None):
+def _retriever(strategy: str, hits=None):
     retriever = MagicMock()
-    retriever.name = name
+    retriever.strategy = strategy
+    # 显式置 None：MagicMock 会自建 ``decorate_query`` 属性，覆盖为 None
+    # 模拟“未实现钩子”的检索器（管线应透传原始 query）。
+    retriever.decorate_query = None
     retriever.retrieve = AsyncMock(return_value=hits or [])
     return retriever
 
@@ -60,22 +67,48 @@ def _pipeline(retrievers, planner, reranker, agent, fused_top_n=5, top_k=5):
     )
 
 
-class TestStrategyQuery:
-    def test_appends_plan_hints(self):
-        plan = QueryPlan(
-            sub_queries=["q"], entities=["张三"], events=["大战"], chapter_hints=["第3章"]
-        )
-        pipeline = _pipeline({}, _planner(plan), _reranker(), _agent(EvidencePack([])))
+class TestDecorateQuery:
+    """#74：检索器经可选 ``decorate_query`` 钩子自行消费 QueryPlan 线索。"""
 
-        assert pipeline._strategy_query(plan, "entity", "q") == "q 张三"
-        assert pipeline._strategy_query(plan, "event", "q") == "q 大战"
-        assert pipeline._strategy_query(plan, "chapter", "q") == "q 第3章"
-        assert pipeline._strategy_query(plan, "dense", "q") == "q"
+    @pytest.mark.asyncio
+    async def test_calls_retriever_decorate_query_hook(self):
+        """实现钩子的检索器收到装饰后的检索词。"""
+        dense = _retriever("dense", [_hit(1, 0)])
+        dense.decorate_query = MagicMock(side_effect=lambda q, plan: f"{q} 线索")
+        plan = QueryPlan(sub_queries=["q"], entities=["张三"], strategies=["dense"])
+        pipeline = _pipeline({"dense": dense}, _planner(plan), _reranker(),
+                             _agent(EvidencePack([])))
 
-    def test_no_hints_keeps_query(self):
-        plan = QueryPlan(sub_queries=["q"])
-        pipeline = _pipeline({}, _planner(plan), _reranker(), _agent(EvidencePack([])))
-        assert pipeline._strategy_query(plan, "entity", "q") == "q"
+        await pipeline._run_hybrid_queries("q", plan, [1])
+
+        dense.decorate_query.assert_called_once_with("q", plan)
+        dense.retrieve.assert_awaited_once_with("q 线索", [1], 5)
+
+    @pytest.mark.asyncio
+    async def test_no_hook_passes_raw_query(self):
+        """未实现钩子的检索器（如 dense/bm25）透传原始 query。"""
+        dense = _retriever("dense", [_hit(1, 0)])
+        plan = QueryPlan(sub_queries=["q"], strategies=["dense"])
+        pipeline = _pipeline({"dense": dense}, _planner(plan), _reranker(),
+                             _agent(EvidencePack([])))
+
+        await pipeline._run_hybrid_queries("q", plan, [1])
+
+        dense.retrieve.assert_awaited_once_with("q", [1], 5)
+
+    @pytest.mark.asyncio
+    async def test_pipeline_ignores_settings_switches(self, monkeypatch):
+        """#74：settings 开关只在装配层生效，注入集合不受影响。"""
+        dense = _retriever("dense", [_hit(1, 0)])
+        plan = QueryPlan(sub_queries=["q"], strategies=["dense"])
+        pipeline = _pipeline({"dense": dense}, _planner(plan), _reranker(),
+                             _agent(EvidencePack([])))
+
+        # 开关关闭后注入的 dense 检索器仍被调用
+        monkeypatch.setattr(assembly_settings, "retrieval_dense_enabled", False)
+        fused = await pipeline._run_hybrid_queries("q", plan, [1])
+
+        assert len(fused) == 1
 
 
 class TestRunHybridQueries:

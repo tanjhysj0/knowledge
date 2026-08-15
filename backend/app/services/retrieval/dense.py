@@ -18,7 +18,7 @@ SCORE_THRESHOLD = 0.5
 class DenseRetriever:
     """PG/pgvector dense 向量检索（策略名 ``dense``）。"""
 
-    name = "dense"
+    strategy = "dense"
 
     def __init__(self, vector_store: Optional[VectorStoreService] = None):
         # 底层存储可注入（单测 mock）；默认每次构造新实例与旧行为一致。
@@ -66,7 +66,7 @@ class DenseRetriever:
                     chunk_index=hit.get("chunk_index"),
                     content=hit.get("content") or "",
                     score=float(similarity) if similarity is not None else 0.0,
-                    strategy=self.name,
+                    strategy=self.strategy,
                 )
             )
         return hits

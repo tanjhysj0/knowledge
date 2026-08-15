@@ -54,7 +54,7 @@ def bm25_score(
 class BM25Retriever:
     """基于 ``bm25_chunks`` 表的 BM25 检索（策略名 ``bm25``）。"""
 
-    name = "bm25"
+    strategy = "bm25"
 
     def __init__(self, session_factory=None):
         # session 工厂可注入（单测用 fake session）；默认走应用全局工厂。
@@ -116,7 +116,7 @@ class BM25Retriever:
                 chunk_index=chunk.chunk_index,
                 content=chunk.content,
                 score=score,
-                strategy=self.name,
+                strategy=self.strategy,
             )
             for score, chunk in scored[:top_k]
         ]

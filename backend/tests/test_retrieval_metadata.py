@@ -8,6 +8,7 @@ from app.services.retrieval.metadata import (
     EventRetriever,
     extract_chapter_no,
 )
+from app.services.retrieval.planner import QueryPlan
 
 
 class _FakeScalars:
@@ -70,6 +71,42 @@ class TestExtractChapterNo:
 
     def test_no_chapter_returns_none(self):
         assert extract_chapter_no("主角是谁") is None
+
+
+class TestDecorateQuery:
+    """#74：三路检索器自描述 strategy 名，并自行消费 QueryPlan 线索。"""
+
+    def test_entity_appends_plan_entities(self):
+        retriever = EntityRetriever()
+        plan = QueryPlan(entities=["张三", "李四"])
+        assert retriever.decorate_query("q", plan) == "q 张三 李四"
+
+    def test_entity_without_hints_keeps_query(self):
+        retriever = EntityRetriever()
+        assert retriever.decorate_query("q", QueryPlan()) == "q"
+
+    def test_event_appends_plan_events(self):
+        retriever = EventRetriever()
+        plan = QueryPlan(events=["大战"])
+        assert retriever.decorate_query("q", plan) == "q 大战"
+
+    def test_event_without_hints_keeps_query(self):
+        retriever = EventRetriever()
+        assert retriever.decorate_query("q", QueryPlan()) == "q"
+
+    def test_chapter_appends_plan_hints(self):
+        retriever = ChapterRetriever()
+        plan = QueryPlan(chapter_hints=["第3章"])
+        assert retriever.decorate_query("q", plan) == "q 第3章"
+
+    def test_chapter_without_hints_keeps_query(self):
+        retriever = ChapterRetriever()
+        assert retriever.decorate_query("q", QueryPlan()) == "q"
+
+    def test_strategy_names_self_described(self):
+        assert EntityRetriever().strategy == "entity"
+        assert EventRetriever().strategy == "event"
+        assert ChapterRetriever().strategy == "chapter"
 
 
 class TestChapterRetriever:

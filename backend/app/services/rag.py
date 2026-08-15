@@ -6,6 +6,8 @@ from starlette.requests import Request
 from app.services.embedding import get_embedding_provider
 from app.services.vector_store import VectorStoreService
 from app.services.llm import get_llm_provider
+from app.services.retrieval import Retriever
+from app.services.retrieval.assembly import build_retrievers
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -31,11 +33,23 @@ class RAGService:
     ``_search_chunks`` / ``_asearch_chunks`` 保留（dense 单路检索，
     :class:`app.services.retrieval.dense.DenseRetriever` 为其迁移副本），
     供存量调用与单测使用。
+
+    #74：检索器集合经构造注入（不实例化具体检索器类）；未注入时在装配层
+    按 settings 开关组装（见 :mod:`app.services.retrieval.assembly`）。
     """
 
-    def __init__(self, request: Optional[Request] = None):
+    def __init__(
+        self,
+        request: Optional[Request] = None,
+        retrievers: Optional[Dict[str, Retriever]] = None,
+    ):
         self._vector_store = VectorStoreService()
         self._request = request
+        # #74：检索器集合（key 为各检索器自描述的 strategy 名）构造注入；
+        # settings 开关仅装配层感知，公用模块不感知。
+        self._retrievers = (
+            retrievers if retrievers is not None else build_retrievers()
+        )
         # #66：最近一次 :meth:`retrieve_evidence` 的证据包（chat service 发
         # SSE ``evidence`` 事件用；RAGService 每次请求新建，无跨请求污染）。
         self._last_evidence_pack = None
@@ -172,6 +186,7 @@ Please answer this question based on your general knowledge."""
         from app.services.retrieval.pipeline import HybridRetrievalPipeline
 
         pipeline = HybridRetrievalPipeline(
+            retrievers=self._retrievers,
             request=self._request,
             top_k=top_k,
         )

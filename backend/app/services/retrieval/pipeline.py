@@ -3,6 +3,11 @@
 
 #71：五路检索与多个子查询均并行执行（asyncio.gather），子查询结果经
 :func:`app.services.retrieval.fusion.merge_hits` 去重合并取 top-N。
+
+#74：检索器集合全部经构造注入（``Dict[str, Retriever]``，key 为各检索器
+自描述的 ``strategy`` 名）——管线不 import、不实例化任何具体检索器类，
+也不感知 settings 开关（装配逻辑见 :mod:`app.services.retrieval.assembly`）；
+QueryPlan 线索由各检索器经可选 ``decorate_query(query, plan)`` 钩子自行消费。
 """
 import asyncio
 import logging
@@ -11,60 +16,29 @@ from typing import Dict, List, Optional
 
 from app.core.config import get_settings
 from app.core.perf import elapsed_ms
-from app.services.retrieval import RetrievalHit
+from app.services.retrieval import Retriever, RetrievalHit
 from app.services.retrieval.agent import EvidenceAgent
-from app.services.retrieval.bm25 import BM25Retriever
-from app.services.retrieval.dense import DenseRetriever
 from app.services.retrieval.evidence import EvidencePack
 from app.services.retrieval.fusion import merge_hits, normalize_scores, rrf_fusion
-from app.services.retrieval.metadata import ChapterRetriever, EntityRetriever, EventRetriever
 from app.services.retrieval.planner import QueryPlan, QueryPlanner
 from app.services.retrieval.reranker import LLMReranker
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-# 策略名 → 检索器类（工厂按 settings 开关实例化）。
-_RETRIEVER_CLASSES = {
-    "dense": DenseRetriever,
-    "bm25": BM25Retriever,
-    "entity": EntityRetriever,
-    "event": EventRetriever,
-    "chapter": ChapterRetriever,
-}
-
-# 策略名 → settings 开关字段名。
-_STRATEGY_SWITCHES = {
-    "dense": "retrieval_dense_enabled",
-    "bm25": "retrieval_bm25_enabled",
-    "entity": "retrieval_entity_enabled",
-    "event": "retrieval_event_enabled",
-    "chapter": "retrieval_chapter_enabled",
-}
-
-
-def build_retrievers() -> Dict[str, object]:
-    """按 settings 开关构建检索器集合（entity/event 索引缺失不影响构建，
-    检索器内部会降级为空结果）。"""
-    retrievers: Dict[str, object] = {}
-    for strategy, cls in _RETRIEVER_CLASSES.items():
-        if not getattr(settings, _STRATEGY_SWITCHES[strategy], True):
-            continue
-        retrievers[strategy] = cls()
-    return retrievers
-
 
 class HybridRetrievalPipeline:
     """混合检索 + 证据循环管线。
 
-    各组件均可注入（单测 mock）；``request`` 透传给 LLM 工厂，让
-    X-E2E-Test 头在 E2E 下把 planner/reranker/agent 的 LLM 调用全部切到
-    MockLLMProvider。
+    检索器集合由构造注入（依赖 :class:`Retriever` 契约与 ``RetrievalHit``，
+    不感知任何具体策略名 / settings 开关）；planner/reranker/agent 也可注入
+    （单测 mock）。``request`` 透传给 LLM 工厂，让 X-E2E-Test 头在 E2E 下把
+    planner/reranker/agent 的 LLM 调用全部切到 MockLLMProvider。
     """
 
     def __init__(
         self,
-        retrievers: Optional[Dict[str, object]] = None,
+        retrievers: Dict[str, Retriever],
         planner: Optional[QueryPlanner] = None,
         reranker: Optional[LLMReranker] = None,
         agent: Optional[EvidenceAgent] = None,
@@ -73,7 +47,7 @@ class HybridRetrievalPipeline:
         fused_top_n: Optional[int] = None,
         max_iterations: Optional[int] = None,
     ):
-        self._retrievers = retrievers if retrievers is not None else build_retrievers()
+        self._retrievers = retrievers
         self._planner = planner or QueryPlanner()
         self._reranker = reranker or LLMReranker()
         self._request = request
@@ -114,16 +88,6 @@ class HybridRetrievalPipeline:
             self._agent._llm = self._resolve_llm()
         return self._agent
 
-    def _strategy_query(self, plan: QueryPlan, strategy: str, query: str) -> str:
-        """把 QueryPlan 的实体/事件/章节线索拼进对应策略的检索词。"""
-        if strategy == "entity" and plan.entities:
-            return f"{query} {' '.join(plan.entities)}"
-        if strategy == "event" and plan.events:
-            return f"{query} {' '.join(plan.events)}"
-        if strategy == "chapter" and plan.chapter_hints:
-            return f"{query} {' '.join(plan.chapter_hints)}"
-        return query
-
     async def _safe_retrieve(
         self,
         strategy: str,
@@ -137,7 +101,10 @@ class HybridRetrievalPipeline:
             return []
         start = time.perf_counter()
         try:
-            strategy_query = self._strategy_query(plan, strategy, query)
+            # #74：QueryPlan 线索由检索器经可选 decorate_query 钩子自行消费，
+            # 管线不感知任何具体策略名；未实现钩子的检索器透传原始 query。
+            decorate = getattr(retriever, "decorate_query", None)
+            strategy_query = decorate(query, plan) if callable(decorate) else query
             hits = await retriever.retrieve(
                 strategy_query, document_ids or None, self._top_k
             )
