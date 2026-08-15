@@ -51,6 +51,11 @@ async def main() -> None:
     await init_db()
     session_maker = get_session_maker()
     async with session_maker() as db:
+        # #69：LLM 配置源在 llm_models 默认行；脚本进程不走启动加载，
+        # 需先镜像默认行到运行时单例，否则事件抽取会被视为未配置而跳过。
+        from app.services.models import sync_runtime_model_from_db
+
+        await sync_runtime_model_from_db(db)
         stmt = select(Document).where(Document.status == "ready")
         if args.id is not None:
             stmt = stmt.where(Document.id == args.id)
