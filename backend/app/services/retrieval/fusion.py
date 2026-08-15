@@ -7,7 +7,7 @@ from app.services.retrieval import RetrievalHit
 RRF_K = 60
 
 # 每路命中内部按 score 降序排列后的归一化打分：rank 越小分越高。
-_DEFAULT_WEIGHTS = {"dense": 1.0, "bm25": 1.0, "entity": 1.0, "event": 1.0, "chapter": 1.0}
+_DEFAULT_WEIGHTS = {"dense": 1.0, "bm25": 1.0, "entity": 1.0, "event": 1.0, "chapter": 1.0, "graph": 1.0}
 
 
 def _dedupe_key(hit: RetrievalHit) -> tuple:

@@ -221,7 +221,7 @@ async def stream_answer(
         rag_service = RAGService(request=request)
         # 先检索拿 sources + prompt 构造依据（#32 + #33）；
         # #63：未 ready 的小说不参与检索。
-        # #66：aretrieve 内部跑混合检索管线（planner → 五路 → fusion →
+        # #66：aretrieve 内部跑混合检索管线（planner → 六路 → fusion →
         # rerank → 证据循环），契约不变。
         retrieve_start = time.perf_counter()
         search_results = await rag_service.aretrieve(

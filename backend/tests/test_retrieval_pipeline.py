@@ -1,6 +1,6 @@
 """#66：HybridRetrievalPipeline 编排单测（全部组件 mock）。
 
-验证数据流：planner → 五路检索 → RRF 融合 → reranker → agent，以及
+验证数据流：planner → 六路检索 → RRF 融合 → reranker → agent，以及
 各类降级路径（首个子查询命中即停、单路失败、未知策略跳过）。
 
 #74：检索器集合全部经构造注入；QueryPlan 线索由检索器可选

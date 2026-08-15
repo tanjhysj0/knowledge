@@ -109,7 +109,7 @@ class TestMockPlanResponseAvailableStrategies:
         assert MockLLMProvider._extract_available_strategies(prompt) == ["dense", "bm25"]
 
     def test_extract_missing_line_returns_none(self):
-        """旧 prompt 格式（无可用策略行）→ ``None``（调用方回退全量五路）。"""
+        """旧 prompt 格式（无可用策略行）→ ``None``（调用方回退全量六路）。"""
         assert MockLLMProvider._extract_available_strategies("[QUERY_PLAN] 无列表") is None
 
     def test_extract_tolerates_spaces_and_empties(self):
@@ -133,7 +133,7 @@ class TestMockPlanResponseAvailableStrategies:
 
     @pytest.mark.asyncio
     async def test_plan_response_falls_back_to_full_set_without_line(self):
-        """旧 prompt（无可用策略行）→ 全量五路（与 #66 mock 行为一致）。"""
+        """旧 prompt（无可用策略行）→ 全量六路（与当前装配全集一致）。"""
         provider = MockLLMProvider()
         raw = await provider.chat(
             [{"role": "user", "content": "[QUERY_PLAN]\n用户问题：Q"}]

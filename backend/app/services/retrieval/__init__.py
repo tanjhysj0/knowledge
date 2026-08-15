@@ -1,7 +1,7 @@
 """#66：混合检索（Hybrid Retrieval）模块。
 
-统一 ``Retriever`` 协议：五路检索器（dense / bm25 / entity / event /
-chapter）各自实现 ``retrieve(query, document_ids, top_k) -> List[RetrievalHit]``，
+统一 ``Retriever`` 协议：六路检索器（dense / bm25 / entity / event /
+chapter / graph）各自实现 ``retrieve(query, document_ids, top_k) -> List[RetrievalHit]``，
 由 :class:`app.services.retrieval.pipeline.HybridRetrievalPipeline` 编排，
 RRF 融合后进入 Evidence Pack。
 
@@ -45,7 +45,7 @@ class RetrievalHit:
 
 @runtime_checkable
 class Retriever(Protocol):
-    """五路检索器的统一协议（#74：公用模块只依赖本契约与 RetrievalHit）。
+    """六路检索器的统一协议（#74：公用模块只依赖本契约与 RetrievalHit）。
 
     检索异常由实现内部吞掉并返回空列表——某一路不可用不影响整体问答
     （PRD：服务稳定降级）。

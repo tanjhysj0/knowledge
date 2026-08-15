@@ -22,7 +22,7 @@ MOCK_PLAN_RESPONSE = {
     "entities": [],
     "events": [],
     "chapter_hints": [],
-    "strategies": ["dense", "bm25", "entity", "event", "chapter"],
+    "strategies": ["dense", "bm25", "entity", "event", "chapter", "graph"],
 }
 MOCK_PLAN_QUERIES_RESPONSE = {"queries": ["mock refinement query"]}
 MOCK_EXTRACT_EVENTS_RESPONSE = {"events": []}
@@ -89,7 +89,7 @@ class MockLLMProvider:
 
         #79：strategies 按 prompt 中动态生成的可用策略列表返回（v1 全量 /
         v2 子集均可断言、不越界）；prompt 无可用策略行（旧格式）时回退
-        全量五路（向后兼容）。
+        全量六路（向后兼容）。
         """
         question = "mock sub query"
         match = re.search(r"用户问题：\s*(.*)$", prompt)
@@ -106,7 +106,7 @@ class MockLLMProvider:
     def _extract_available_strategies(prompt: str) -> Optional[List[str]]:
         """从 planner prompt 的"可用策略列表："行提取策略名列表。
 
-        无该行（旧 prompt 格式）返回 ``None``（调用方回退全量五路）。
+        无该行（旧 prompt 格式）返回 ``None``（调用方回退全量六路）。
         """
         match = re.search(r"可用策略列表：(.+)", prompt)
         if not match:

@@ -1,7 +1,7 @@
 """#79：v1 接入层白名单动态化测试——装配层推导的"当前启用全集"。
 
 覆盖：
-- 默认 settings 全开时 CHAT_STRATEGIES 为五路全量（与迁移前语义一致）；
+- 默认 settings 全开时 CHAT_STRATEGIES 为六路全量（#81 起含 graph）；
 - 开关关闭后重新加载模块 → 对应策略自动退出 v1 白名单（新增检索器 +
   打开开关即自动进入 v1）；
 - 端到端（经 /api/v1/chat/stream 端点驱动真实管线）：planner prompt 的
@@ -83,9 +83,9 @@ class TestV1WhitelistDynamic:
     """v1 白名单由装配层按 settings 开关动态推导（非写死的策略名列表）。"""
 
     def test_default_full_set_matches_legacy_behavior(self):
-        """默认全开：v1 白名单 = 五路全量（与迁移前默认生效策略集合一致）。"""
+        """默认全开：v1 白名单 = 六路全量（#81 起含 graph，与迁移前语义一致）。"""
         assert chat_module.CHAT_STRATEGIES == [
-            "dense", "bm25", "entity", "event", "chapter",
+            "dense", "bm25", "entity", "event", "chapter", "graph",
         ]
 
     def test_tracks_switch_off_after_reload(self, monkeypatch):
@@ -95,7 +95,7 @@ class TestV1WhitelistDynamic:
 
         reloaded = importlib.reload(chat_module)
         try:
-            assert reloaded.CHAT_STRATEGIES == ["dense", "bm25", "event"]
+            assert reloaded.CHAT_STRATEGIES == ["dense", "bm25", "event", "graph"]
             assert "entity" not in reloaded.CHAT_STRATEGIES
         finally:
             # 先撤销 settings 变更再重新加载，恢复默认全量白名单（避免
@@ -114,7 +114,7 @@ def _fake_retriever(strategy: str, hits):
 
 
 class _V1PipelineLLM:
-    """端到端证据测试的确定性 LLM：planner 返回全量五路（v1 白名单内），
+    """端到端证据测试的确定性 LLM：planner 返回全量六路（v1 白名单内），
     agent 第一次判定不足（触发补充检索），之后足够。"""
 
     def __init__(self):
@@ -131,8 +131,8 @@ class _V1PipelineLLM:
                     "entities": [],
                     "events": [],
                     "chapter_hints": [],
-                    # 全量五路均建议：v1 白名单（当前启用全集）内，不越界
-                    "strategies": ["dense", "bm25", "entity", "event", "chapter"],
+                    # 全量六路均建议：v1 白名单（当前启用全集）内，不越界
+                    "strategies": ["dense", "bm25", "entity", "event", "chapter", "graph"],
                 },
                 ensure_ascii=False,
             )
@@ -170,7 +170,7 @@ class TestV1EvidenceStrategiesWithinWhitelist:
             strategy: _fake_retriever(
                 strategy, [RetrievalHit(i + 1, 0, f"{strategy}-c0", 0.9, strategy)]
             )
-            for i, strategy in enumerate(["dense", "bm25", "entity", "event", "chapter"])
+            for i, strategy in enumerate(["dense", "bm25", "entity", "event", "chapter", "graph"])
         }
         monkeypatch.setattr(chat_module, "is_llm_configured", lambda: (True, ""))
         from app.services.rag import RAGService
@@ -196,7 +196,7 @@ class TestV1EvidenceStrategiesWithinWhitelist:
         )
         assert line == AVAILABLE_STRATEGIES_LINE + ", ".join(chat_module.CHAT_STRATEGIES)
 
-        # 证据循环发生了补充检索：五路各被调用两次（首轮 + 补充）
+        # 证据循环发生了补充检索：六路各被调用两次（首轮 + 补充）
         for strategy, retriever in retrievers.items():
             assert retriever.retrieve.await_count == 2, strategy
 

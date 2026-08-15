@@ -7,7 +7,7 @@ LLM 不可用时仍然可用。
 #79：可注入"生效检索器对象集合"（``Dict[str, Retriever]``，仅依赖
 :class:`Retriever` 契约与各对象自描述的 ``strategy`` 名，不感知具体策略
 名 / settings 开关）——注入后 prompt 动态生成可用策略列表（不写死策略
-名），解析与降级均按可用集合过滤；未注入时行为与 #66 完全一致（全量五路）。
+名），解析与降级均按可用集合过滤；未注入时行为与 #66 完全一致（全量六路）。
 """
 import json
 import re
@@ -20,8 +20,8 @@ from app.services.retrieval import Retriever
 # prompt 中的任务标记：MockLLMProvider 靠它返回确定性的 E2E 计划。
 PLANNER_MARKER = "[QUERY_PLAN]"
 
-# 全部五路策略（planner 降级 / 未显式指定时启用集合）。
-ALL_STRATEGIES = ["dense", "bm25", "entity", "event", "chapter"]
+# 全部六路策略（planner 降级 / 未显式指定时启用集合；#81 起含 graph）。
+ALL_STRATEGIES = ["dense", "bm25", "entity", "event", "chapter", "graph"]
 
 # prompt 中动态生成可用策略列表所在行的前缀（MockLLMProvider 靠它按可用
 # 策略返回确定性的 E2E 计划；prompt 中不写死任何策略名）。
@@ -53,7 +53,7 @@ def _fallback_plan(
 ) -> QueryPlan:
     """LLM 不可用/输出非法时的保守计划：原问题单查询 + 可用策略。
 
-    #79：``available_strategies`` 未指定（``None``）时回落全量五路（与 #66 一致）。
+    #79：``available_strategies`` 未指定（``None``）时回落全量六路（与 #66 一致）。
     """
     strategies = (
         list(available_strategies)
@@ -81,7 +81,7 @@ def parse_query_plan(
     纯函数，便于单测。容忍 LLM 在 JSON 外包裹 markdown 代码块。
 
     #79：``available_strategies`` 为当前生效的可用策略集合（``None`` 等价
-    于全量五路）——LLM 建议的越界策略被过滤，strategies 为空或未指定时
+    于全量六路）——LLM 建议的越界策略被过滤，strategies 为空或未指定时
     回落到可用集合（而非全量）。
     """
     if not raw:
@@ -125,7 +125,7 @@ class QueryPlanner:
     #79：``retrievers`` 为生效检索器对象集合（``Dict[str, Retriever]``，
     仅依赖 :class:`Retriever` 契约与自描述 ``strategy`` 名）——注入后
     prompt 动态生成可用策略列表并指示只建议可用策略；未注入时行为与 #66
-    完全一致（全量五路，现有单测 / E2E 不回归）。
+    完全一致（全量六路，现有单测 / E2E 不回归）。
     """
 
     def __init__(
@@ -146,7 +146,7 @@ class QueryPlanner:
     def _available_strategies(self) -> List[str]:
         """当前生效的可用策略列表：注入集合的自描述 strategy 名。
 
-        未注入时返回全量五路（#66 行为）；注入集合为空则返回空列表。
+        未注入时返回全量六路（#66 行为）；注入集合为空则返回空列表。
         """
         if self._retrievers is None:
             return list(ALL_STRATEGIES)

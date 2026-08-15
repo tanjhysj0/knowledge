@@ -223,7 +223,7 @@ class TestStreamAnswerStrategies:
 
 
 class TestV1EndpointStrategyWhitelist:
-    """#76：v1 端点接入层显式传入全量五路检索策略白名单。"""
+    """#76/#81：v1 端点接入层显式传入全量六路检索策略白名单。"""
 
     @pytest.mark.asyncio
     async def test_stream_endpoint_passes_full_whitelist(self):
@@ -246,7 +246,9 @@ class TestV1EndpointStrategyWhitelist:
 
         mock_stream.assert_called_once()
         _, kwargs = mock_stream.call_args
-        assert kwargs["strategies"] == ["dense", "bm25", "entity", "event", "chapter"]
+        assert kwargs["strategies"] == [
+            "dense", "bm25", "entity", "event", "chapter", "graph",
+        ]
 
     @pytest.mark.asyncio
     async def test_chat_endpoint_passes_full_whitelist(self):
@@ -265,7 +267,9 @@ class TestV1EndpointStrategyWhitelist:
 
         mock_ask.assert_called_once()
         _, kwargs = mock_ask.call_args
-        assert kwargs["strategies"] == ["dense", "bm25", "entity", "event", "chapter"]
+        assert kwargs["strategies"] == [
+            "dense", "bm25", "entity", "event", "chapter", "graph",
+        ]
 
 
 class TestChatStreamPersistedContent:

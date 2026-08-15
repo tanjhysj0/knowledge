@@ -1,7 +1,7 @@
 """#66：Query Planner 单测（解析纯函数 + LLM 驱动的规划与降级）。
 
 #79：注入检索器对象集合后——prompt 动态生成可用策略列表、解析与降级
-均按可用集合过滤；未注入时行为与 #66 完全一致（全量五路）。
+# 均按可用集合过滤；未注入时行为与 #66 完全一致（全量六路）。
 """
 from unittest.mock import AsyncMock, MagicMock
 
@@ -112,7 +112,7 @@ class TestParseQueryPlanAvailableStrategies:
         assert plan.strategies == ["dense", "bm25"]
 
     def test_none_available_keeps_legacy_full_set(self):
-        """未指定可用集合时行为与 #66 完全一致（全量五路）。"""
+        """未指定可用集合时行为与 #66 完全一致（全量六路）。"""
         raw = '{"sub_queries": ["q"], "strategies": ["entity"]}'
         plan = parse_query_plan(raw, "fallback")
         assert plan.strategies == ["entity"]
@@ -199,7 +199,7 @@ class TestQueryPlannerInjectedRetrievers:
 
     @pytest.mark.asyncio
     async def test_plan_failure_falls_back_to_available(self):
-        """LLM 不可用 → 降级计划 strategies ⊆ 可用集合（而非全量五路）。"""
+        """LLM 不可用 → 降级计划 strategies ⊆ 可用集合（而非全量六路）。"""
         llm = MagicMock()
         llm.chat = AsyncMock(side_effect=RuntimeError("llm down"))
         planner = QueryPlanner(llm=llm, retrievers=_retrievers("dense", "bm25"))
@@ -224,7 +224,7 @@ class TestQueryPlannerInjectedRetrievers:
 
     @pytest.mark.asyncio
     async def test_no_retrievers_keeps_legacy_full_prompt(self):
-        """未注入 → prompt 可用列表为全量五路（#66 行为不回归）。"""
+        """未注入 → prompt 可用列表为全量六路（#66 行为不回归）。"""
         llm = MagicMock()
         llm.chat = AsyncMock(return_value='{"sub_queries": ["q1"]}')
         planner = QueryPlanner(llm=llm)

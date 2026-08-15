@@ -39,13 +39,15 @@ class Settings(BaseSettings):
     chunk_size: int = 500
     chunk_overlap: int = 50
 
-    # Hybrid retrieval（#66）：五路检索策略开关（默认全开；entity/event 索引
-    # 不可用时检索器自动降级为空结果，不阻断整体问答）。
+    # Hybrid retrieval（#66/#81）：六路检索策略开关（默认全开；entity/event
+    # 索引不可用时检索器自动降级为空结果，graph 图数据为空同样静默空结果，
+    # 均不阻断整体问答）。
     retrieval_dense_enabled: bool = True
     retrieval_bm25_enabled: bool = True
     retrieval_entity_enabled: bool = True
     retrieval_event_enabled: bool = True
     retrieval_chapter_enabled: bool = True
+    retrieval_graph_enabled: bool = True
     # 各路检索 top_k；融合后取 top-N 进入证据包。
     retrieval_top_k: int = 5
     retrieval_fused_top_n: int = 5

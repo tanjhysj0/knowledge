@@ -1,7 +1,7 @@
 """v1 聊天路由层：仅做 HTTP/SSE 适配、依赖注入和服务调用。
 
 #76：聊天 API 版本化第一步——端点从 ``/api/chat`` 迁移到 ``/api/v1/chat``；
-v1 路由在接入层显式传入全量五路检索策略白名单（:data:`CHAT_STRATEGIES`），
+v1 路由在接入层显式传入全量六路检索策略白名单（:data:`CHAT_STRATEGIES`），
 行为与迁移前完全一致（答案 / sources / SSE 事件序列不变）。
 
 #79：v1 白名单动态化——改为装配层推导的"当前启用全集"（settings 开关开启
@@ -32,7 +32,7 @@ from app.services.retrieval.assembly import enabled_strategy_names
 router = APIRouter()
 
 # #79：v1 接入层的"当前启用全集"白名单——由装配层按 settings 开关推导
-# （默认全开 = 五路全量，与迁移前默认生效策略集合一致）；新增检索器 +
+# （默认全开 = 六路全量，与迁移前默认生效策略集合一致）；新增检索器 +
 # 打开开关即自动进入 v1（v2 保持显式业务子集，见 :mod:`app.api.v2.chat`）。
 CHAT_STRATEGIES = enabled_strategy_names()
 

@@ -1,7 +1,7 @@
-"""#66：混合检索管线编排——Query Planner → 五路检索 → Fusion → Reranker
+"""#66：混合检索管线编排——Query Planner → 六路检索 → Fusion → Reranker
 → Evidence Pack → Evidence Agent 证据循环。
 
-#71：五路检索与多个子查询均并行执行（asyncio.gather），子查询结果经
+#71：六路检索与多个子查询均并行执行（asyncio.gather），子查询结果经
 :func:`app.services.retrieval.fusion.merge_hits` 去重合并取 top-N。
 
 #74：检索器集合全部经构造注入（``Dict[str, Retriever]``，key 为各检索器

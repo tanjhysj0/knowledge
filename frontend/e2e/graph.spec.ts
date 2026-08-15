@@ -94,6 +94,20 @@ async function fetchTriples(documentId: number): Promise<Triple[]> {
   }
 }
 
+function parseSseEvents(body: string): { event: string; data: any }[] {
+  return body
+    .trim()
+    .split(/\r?\n\r?\n/)
+    .map((block) => {
+      const lines = block.split(/\r?\n/);
+      const event = lines.find((l) => l.startsWith('event: '))?.slice(7);
+      const data = lines.find((l) => l.startsWith('data: '))?.slice(6);
+      expect(event).toBeTruthy();
+      expect(data).toBeTruthy();
+      return { event: event!, data: JSON.parse(data!) };
+    });
+}
+
 cleanupTest.describe('GraphRAG 图谱构建 - E2E (#80)', () => {
   cleanupTest.beforeEach(async () => {
     // 后台索引含真实 embedding 推理（HTTP 服务），放宽单个用例超时。
@@ -184,5 +198,76 @@ cleanupTest.describe('GraphRAG 图谱构建 - E2E (#80)', () => {
     }
     await new Promise((r) => setTimeout(r, 300));
     expect(await fetchTriples(doc.id)).toEqual([]);
+  });
+
+  cleanupTest('上传+写入图专属三元组后，问答证据包含 graph 路回溯命中', async ({ page, uploadedDocs }) => {
+    // 文档原文不含"王五"：dense/bm25/entity 等路无法命中，只有 graph 路经
+    // 写入接口的图数据回溯到该文本块（chunk 99 为写入时指定的源引用位置）。
+    const filename = `graph-chat-${Date.now()}.txt`;
+    await uploadViaApi(filename, '张三与李四在星海相遇，张三成为主角。');
+    const doc = await pollReady(filename);
+    await uploadedDocs.track(filename);
+
+    // 写入图专属三元组：王五 挑战 张三（文档中无"王五"，仅图数据可回溯）。
+    const ctx = await e2eApiContext();
+    try {
+      const res = await ctx.post('/api/graph/triples', {
+        data: {
+          document_id: doc.id,
+          subject: '王五',
+          relation: '挑战',
+          object: '张三',
+          chunk_index: 99,
+          content: '王五挑战张三',
+        },
+      });
+      expect(res.ok()).toBeTruthy();
+    } finally {
+      await ctx.dispose();
+    }
+
+    await page.goto('/');
+    await page.waitForLoadState('networkidle').catch(() => {});
+
+    // 浏览器 context 自动携带 X-E2E-Test：planner mock 返回全量六路策略，
+    // graph 路检索经真实 PG 图数据返回命中，进入 RRF 融合与证据包。
+    const streamText = await page.evaluate(
+      async ({ question, docId }: { question: string; docId: number }) => {
+        const convRes = await fetch('/api/conversations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        const conv = (await convRes.json()) as { id: number };
+        const res = await fetch('/api/v1/chat/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: question,
+            document_ids: [docId],
+            conversation_id: conv.id,
+          }),
+        });
+        const text = await res.text();
+        await fetch(`/api/conversations/${conv.id}`, { method: 'DELETE' }).catch(() => {});
+        return text;
+      },
+      { question: '王五', docId: doc.id }
+    );
+
+    const events = parseSseEvents(streamText);
+    // evidence 事件携带 graph 命中：唯一一条（图专属三元组），源引用回填。
+    const evidence = events.find((e) => e.event === 'evidence')?.data;
+    expect(evidence).toBeTruthy();
+    const graphHits = (evidence.hits as any[]).filter((h) => h.strategy === 'graph');
+    expect(graphHits.length).toBe(1);
+    expect(graphHits[0].chunk_index).toBe(99);
+    expect(graphHits[0].content).toContain('王五');
+
+    // done 事件结构化证据同样携带 graph 命中（与 evidence 一致）。
+    const done = events[events.length - 1];
+    expect(done.event).toBe('done');
+    const doneGraph = (done.data.evidence as any[]).filter((h) => h.strategy === 'graph');
+    expect(doneGraph.length).toBe(1);
   });
 });

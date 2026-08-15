@@ -18,6 +18,7 @@ from app.core.config import get_settings
 from app.services.retrieval import Retriever
 from app.services.retrieval.bm25 import BM25Retriever
 from app.services.retrieval.dense import DenseRetriever
+from app.services.retrieval.graph import GraphRetriever
 from app.services.retrieval.metadata import ChapterRetriever, EntityRetriever, EventRetriever
 
 settings = get_settings()
@@ -30,6 +31,7 @@ _RETRIEVER_CLASSES: List[Type[Retriever]] = [
     EntityRetriever,
     EventRetriever,
     ChapterRetriever,
+    GraphRetriever,
 ]
 
 
