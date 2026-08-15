@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.api import chat as chat_module
 from app.api.chat import chat_stream
 from app.models.schemas import ChatRequest
+from app.services.chat import stream_answer
 from app.services.llm import reset_providers
 from app.services.rag import RAGService
 
@@ -185,6 +186,40 @@ class TestChatStreamSSE:
         assert done is not None
         assert "sources" in done[1]
         assert done[1]["sources"] == []
+
+
+class TestStreamAnswerStrategies:
+    """#75：``strategies`` 白名单经 stream_answer 透传给 aretrieve。"""
+
+    @pytest.mark.asyncio
+    async def test_forwards_strategies_to_aretrieve(self):
+        async def fake_stream(messages):
+            yield "ok"
+
+        from types import SimpleNamespace
+
+        db = _FakeSession(conversations=[SimpleNamespace(id=88, message_count=0)])
+        with patch("app.services.rag.RAGService._llm") as mock_llm, patch.object(
+            RAGService,
+            "aretrieve",
+            new=AsyncMock(return_value=[]),
+            create=True,
+        ) as mock_aretrieve:
+            mock_llm.return_value.stream_chat = fake_stream
+            events = await _collect_sse_dicts(
+                stream_answer(
+                    question="Q",
+                    document_ids=[],
+                    conversation_id=88,
+                    db=db,
+                    strategies=["dense"],
+                )
+            )
+
+        assert any(e[0] == "done" for e in events)
+        mock_aretrieve.assert_awaited_once_with(
+            question="Q", document_ids=[], history=[], strategies=["dense"]
+        )
 
 
 class TestChatStreamPersistedContent:

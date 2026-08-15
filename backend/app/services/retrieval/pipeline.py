@@ -8,6 +8,10 @@
 自描述的 ``strategy`` 名）——管线不 import、不实例化任何具体检索器类，
 也不感知 settings 开关（装配逻辑见 :mod:`app.services.retrieval.assembly`）；
 QueryPlan 线索由各检索器经可选 ``decorate_query(query, plan)`` 钩子自行消费。
+
+#75：可选 ``strategies`` 白名单——生效集合 = 白名单 ∩ 注入检索器集合 ∩
+Query Planner 建议（``None`` 等价于不限定）；证据循环的补充检索复用同一
+并行检索入口（:meth:`_run_hybrid_queries`），自动继承白名单约束。
 """
 import asyncio
 import logging
@@ -34,6 +38,9 @@ class HybridRetrievalPipeline:
     不感知任何具体策略名 / settings 开关）；planner/reranker/agent 也可注入
     （单测 mock）。``request`` 透传给 LLM 工厂，让 X-E2E-Test 头在 E2E 下把
     planner/reranker/agent 的 LLM 调用全部切到 MockLLMProvider。
+
+    ``strategies`` 为调用方检索策略白名单（#75）：生效集合 = 白名单 ∩
+    注入检索器集合 ∩ Planner 建议；``None`` 等价于不限定（现有行为）。
     """
 
     def __init__(
@@ -46,8 +53,12 @@ class HybridRetrievalPipeline:
         top_k: Optional[int] = None,
         fused_top_n: Optional[int] = None,
         max_iterations: Optional[int] = None,
+        strategies: Optional[List[str]] = None,
     ):
         self._retrievers = retrievers
+        # #75：调用方白名单（``None`` 不限定）；与注入集合 / Planner 建议
+        # 取交集，证据循环补充检索复用 ``_run_hybrid_queries`` 自动继承。
+        self._strategies = set(strategies) if strategies is not None else None
         self._planner = planner or QueryPlanner()
         self._reranker = reranker or LLMReranker()
         self._request = request
@@ -132,9 +143,18 @@ class HybridRetrievalPipeline:
         plan: QueryPlan,
         document_ids: List[int],
     ) -> List[RetrievalHit]:
-        """对单个查询并行执行五路检索 + RRF 融合（不含证据循环）。"""
+        """对单个查询并行执行检索 + RRF 融合（不含证据循环）。
+
+        #75：生效策略 = 白名单 ∩ 注入检索器集合 ∩ Planner 建议；
+        ``None`` 白名单等价于不限定。证据循环补充检索同样经本入口。
+        """
         start = time.perf_counter()
-        strategies = [s for s in plan.strategies if s in self._retrievers]
+        strategies = [
+            s
+            for s in plan.strategies
+            if s in self._retrievers
+            and (self._strategies is None or s in self._strategies)
+        ]
         results = await asyncio.gather(
             *(self._safe_retrieve(s, query, plan, document_ids) for s in strategies)
         )

@@ -204,7 +204,7 @@ class TestAretrieve:
         ) as mock_retrieve:
             results = await rag.aretrieve("Q", [1], top_k=5, history=history)
 
-        mock_retrieve.assert_awaited_once_with("Q", [1], 5, history)
+        mock_retrieve.assert_awaited_once_with("Q", [1], 5, history, None)
         assert results[0]["document_id"] == 1
 
     @pytest.mark.asyncio
@@ -220,7 +220,25 @@ class TestAretrieve:
         ) as mock_retrieve:
             await rag.aretrieve("Q", [1])
 
-        mock_retrieve.assert_awaited_once_with("Q", [1], None, None)
+        mock_retrieve.assert_awaited_once_with("Q", [1], None, None, None)
+
+    @pytest.mark.asyncio
+    async def test_forwards_strategies_to_retrieve_evidence(self):
+        """#75：``strategies`` 白名单经 aretrieve 透传给 retrieve_evidence。"""
+        rag = RAGService.__new__(RAGService)
+        rag._vector_store = MagicMock()
+        rag._request = None
+        pack = MagicMock()
+        pack.hits = []
+
+        with patch.object(
+            rag, "retrieve_evidence", AsyncMock(return_value=pack)
+        ) as mock_retrieve:
+            await rag.aretrieve("Q", [1], strategies=["dense", "bm25"])
+
+        mock_retrieve.assert_awaited_once_with(
+            "Q", [1], None, None, ["dense", "bm25"]
+        )
 
 
 class TestRetrieverInjection:
@@ -264,6 +282,26 @@ class TestRetrieverInjection:
         mock_cls.return_value.retrieve.assert_awaited_once_with(
             "Q", [1], [{"role": "user", "content": "hi"}]
         )
+
+    @pytest.mark.asyncio
+    async def test_retrieve_evidence_forwards_strategies_to_pipeline(self):
+        """#75：``strategies`` 白名单透传给管线构造（``None`` 不限定）。"""
+        rag = RAGService.__new__(RAGService)
+        rag._vector_store = MagicMock()
+        rag._request = None
+        rag._retrievers = {"dense": MagicMock()}
+        pack = MagicMock()
+
+        with patch("app.services.retrieval.pipeline.HybridRetrievalPipeline") as mock_cls:
+            mock_cls.return_value.retrieve = AsyncMock(return_value=pack)
+            result = await rag.retrieve_evidence(
+                "Q", [1], top_k=7, strategies=["dense"]
+            )
+
+        assert result is pack
+        _, kwargs = mock_cls.call_args
+        assert kwargs["strategies"] == ["dense"]
+        assert kwargs["top_k"] == 7
 
 
 class TestRAGServiceAnswer:

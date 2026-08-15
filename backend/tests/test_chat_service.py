@@ -190,7 +190,7 @@ class TestAsk:
 
         assert result == {"answer": "Hello back", "sources": ["doc_1"]}
         mock_instance.aretrieve.assert_called_once_with(
-            question="Hi", document_ids=[1], history=[]
+            question="Hi", document_ids=[1], history=[], strategies=None
         )
         # 命中时使用 RAG prompt
         mock_instance._build_rag_prompt.assert_called_once()
@@ -239,6 +239,39 @@ class TestAsk:
 
         # #36：写完消息 + touch_conversation 各 commit 一次
         assert db.commits == 2
+
+    @pytest.mark.asyncio
+    async def test_forwards_strategies_to_aretrieve(self):
+        """#75：``strategies`` 白名单经 ask 透传给 aretrieve。"""
+        db = _FakeAsyncSession(
+            conversations=[SimpleNamespace(id=13, message_count=0)],
+            ready_document_ids=[1],
+        )
+        fake_llm = MagicMock()
+        fake_llm.chat = AsyncMock(return_value="x")
+
+        with patch.object(chat_service, "RAGService") as MockRAG:
+            mock_instance = MockRAG.return_value
+            mock_instance.aretrieve = AsyncMock(return_value=[])
+            mock_instance._llm = MagicMock(return_value=fake_llm)
+            mock_instance._build_rag_prompt = MagicMock(return_value="RAG PROMPT")
+            mock_instance._build_external_prompt = MagicMock(return_value="EXT PROMPT")
+            mock_instance._dedupe_sources = RAGService._dedupe_sources
+
+            await ask(
+                question="Q",
+                document_ids=[1],
+                conversation_id=13,
+                db=db,
+                strategies=["dense", "bm25"],
+            )
+
+        mock_instance.aretrieve.assert_called_once_with(
+            question="Q",
+            document_ids=[1],
+            history=[],
+            strategies=["dense", "bm25"],
+        )
 
     @pytest.mark.asyncio
     async def test_handles_empty_document_ids(self):
@@ -328,7 +361,7 @@ class TestReadyDocumentFilter:
 
         # 仅 ready 的 id=2 参与检索
         mock_instance.aretrieve.assert_called_once_with(
-            question="Q", document_ids=[2], history=[]
+            question="Q", document_ids=[2], history=[], strategies=None
         )
         # 落库的 user 消息仍存原始 ids
         users = [obj for obj in db.added if obj.role == "user"]
@@ -359,7 +392,7 @@ class TestReadyDocumentFilter:
             )
 
         mock_instance.aretrieve.assert_called_once_with(
-            question="Q", document_ids=[], history=[]
+            question="Q", document_ids=[], history=[], strategies=None
         )
         mock_instance._build_external_prompt.assert_called_once()
         mock_instance._build_rag_prompt.assert_not_called()
@@ -388,7 +421,7 @@ class TestReadyDocumentFilter:
             )
 
         mock_instance.aretrieve.assert_called_once_with(
-            question="Q", document_ids=[6], history=[]
+            question="Q", document_ids=[6], history=[], strategies=None
         )
 
 

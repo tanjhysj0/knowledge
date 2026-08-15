@@ -91,10 +91,14 @@ async def ask(
     conversation_id: int,
     db: AsyncSession,
     request: Optional[Request] = None,
+    strategies: Optional[List[str]] = None,
 ) -> Dict[str, object]:
     """调用 RAG 给出单轮答案，并落库 user + assistant 两条 ``ChatMessage``。
 
     返回 ``{"answer": str, "sources": list[str]}``。
+
+    #75：``strategies`` 为检索策略白名单，透传给 :meth:`RAGService.aretrieve`
+    （``None`` 不限定，行为与现状一致）。
     """
     # #36：会话必须存在；不存在则 Pydantic 业务层拑 404
     await _ensure_conversation(db, conversation_id)
@@ -118,6 +122,7 @@ async def ask(
         question=question,
         document_ids=await _filter_ready_document_ids(db, document_ids),
         history=history,
+        strategies=strategies,
     )
     logger.info(
         "[perf] chat.retrieve hits=%d ms=%.1f",
@@ -171,6 +176,7 @@ async def stream_answer(
     conversation_id: int,
     db: AsyncSession,
     request: Optional[Request] = None,
+    strategies: Optional[List[str]] = None,
 ) -> AsyncIterator[Dict[str, str]]:
     """流式产出 RAG 答案的 SSE 事件，并在流结束后落库 user + assistant 两条 ``ChatMessage``。
 
@@ -179,6 +185,8 @@ async def stream_answer(
     每条 ``data`` 字段是 ``json.dumps`` 序列化后的字符串。
 
     #36：多轮上下文仅按当前 ``conversation_id`` 取历史，并验证会话存在。
+    #75：``strategies`` 为检索策略白名单，透传给 :meth:`RAGService.aretrieve`
+    （``None`` 不限定，行为与现状一致）。
     """
     sources: List[str] = []
     full_answer = ""
@@ -222,6 +230,7 @@ async def stream_answer(
             # #66：当前问题之前的历史（context_messages 末尾刚 append 了
             # 当前问题，切掉后传给 planner 做多轮指代消解）。
             history=context_messages[:-1],
+            strategies=strategies,
         )
         logger.info(
             "[perf] chat.retrieve hits=%d ms=%.1f",

@@ -36,6 +36,9 @@ class RAGService:
 
     #74：检索器集合经构造注入（不实例化具体检索器类）；未注入时在装配层
     按 settings 开关组装（见 :mod:`app.services.retrieval.assembly`）。
+
+    #75：可选 ``strategies`` 检索策略白名单逐层透传给混合检索管线（
+    ``None`` 不限定，行为与 #74 一致）。
     """
 
     def __init__(
@@ -175,12 +178,16 @@ Please answer this question based on your general knowledge."""
         document_ids: List[int],
         top_k: int = 5,
         history: Optional[List[Dict[str, str]]] = None,
+        strategies: Optional[List[str]] = None,
     ):
         """#66：完整证据管线入口（规划 → 混合检索 → 融合 → 重排 → 证据循环）。
 
         返回 :class:`~app.services.retrieval.evidence.EvidencePack`；同时
         缓存在 ``self`` 上供 :meth:`last_evidence_pack` 读取（SSE evidence
         事件）。
+
+        #75：``strategies`` 为调用方检索策略白名单，透传给管线（``None``
+        不限定）。
         """
         from app.services.retrieval.evidence import EvidencePack
         from app.services.retrieval.pipeline import HybridRetrievalPipeline
@@ -189,6 +196,7 @@ Please answer this question based on your general knowledge."""
             retrievers=self._retrievers,
             request=self._request,
             top_k=top_k,
+            strategies=strategies,
         )
         pack: EvidencePack = await pipeline.retrieve(
             question, document_ids or [], history
@@ -216,6 +224,7 @@ Please answer this question based on your general knowledge."""
         document_ids: List[int],
         top_k: Optional[int] = None,
         history: Optional[List[Dict[str, str]]] = None,
+        strategies: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """公开的检索入口：跑混合检索管线，返回旧格式命中 dict 列表。
 
@@ -223,9 +232,12 @@ Please answer this question based on your general knowledge."""
         事件能携带 sources；不在本方法内做 prompt 构造 / LLM 调用。
 
         ``history`` 透传给 Query Planner 做多轮指代消解（当前问题之前
-        的对话历史）。
+        的对话历史）；``strategies``（#75）为检索策略白名单，透传给
+        ``retrieve_evidence``（``None`` 不限定）。
         """
-        pack = await self.retrieve_evidence(question, document_ids, top_k, history)
+        pack = await self.retrieve_evidence(
+            question, document_ids, top_k, history, strategies
+        )
         return [self._hit_to_legacy_dict(hit) for hit in pack.hits]
 
     async def answer(

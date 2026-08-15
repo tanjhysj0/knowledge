@@ -5,12 +5,16 @@
 
 #74：检索器集合全部经构造注入；QueryPlan 线索由检索器可选
 ``decorate_query`` 钩子自行消费，管线不感知 settings 开关。
+
+#75：可选 ``strategies`` 白名单——生效集合 = 白名单 ∩ 注入集合 ∩
+Planner 建议；``None`` 等价于不限定；证据循环补充检索不逃逸白名单。
 """
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.services.retrieval import RetrievalHit
+from app.services.retrieval.agent import JUDGE_MARKER, PLAN_QUERIES_MARKER
 from app.services.retrieval.assembly import settings as assembly_settings
 from app.services.retrieval.evidence import EvidencePack
 from app.services.retrieval.pipeline import HybridRetrievalPipeline
@@ -55,7 +59,8 @@ def _agent(pack: EvidencePack):
     return agent
 
 
-def _pipeline(retrievers, planner, reranker, agent, fused_top_n=5, top_k=5):
+def _pipeline(retrievers, planner, reranker, agent, fused_top_n=5, top_k=5,
+              strategies=None):
     return HybridRetrievalPipeline(
         retrievers=retrievers,
         planner=planner,
@@ -64,6 +69,7 @@ def _pipeline(retrievers, planner, reranker, agent, fused_top_n=5, top_k=5):
         top_k=top_k,
         fused_top_n=fused_top_n,
         max_iterations=2,
+        strategies=strategies,
     )
 
 
@@ -215,4 +221,122 @@ class TestRetrieve:
 
         await pipeline.retrieve("Q", [1])
 
+        assert dense.retrieve.await_count == 2
+
+
+class _FakeEvidenceLLM:
+    """按 prompt 任务标记返回确定性判定：第一次证据不足，之后足够。"""
+
+    def __init__(self):
+        self.judge_calls = 0
+
+    async def chat(self, messages, **kwargs):
+        content = messages[0]["content"]
+        if PLAN_QUERIES_MARKER in content:
+            return '{"queries": ["补充查询"]}'
+        if JUDGE_MARKER in content:
+            self.judge_calls += 1
+            return "INSUFFICIENT" if self.judge_calls == 1 else "SUFFICIENT"
+        raise AssertionError(f"unexpected prompt: {content[:80]!r}")
+
+
+class TestStrategiesWhitelist:
+    """#75：调用方 ``strategies`` 白名单——生效集合 = 白名单 ∩ 注入集合 ∩
+    Planner 建议；``None`` 等价于不限定；证据循环补充检索不逃逸。"""
+
+    @pytest.mark.asyncio
+    async def test_whitelist_filters_planner_strategies(self):
+        """planner 建议含白名单外策略时，只调用白名单内的检索器。"""
+        dense = _retriever("dense", [_hit(1, 0)])
+        bm25 = _retriever("bm25", [_hit(1, 1)])
+        entity = _retriever("entity", [_hit(1, 2)])
+        plan = QueryPlan(sub_queries=["q"], strategies=["dense", "bm25", "entity"])
+        pipeline = _pipeline(
+            {"dense": dense, "bm25": bm25, "entity": entity},
+            _planner(plan), _reranker(), _agent(EvidencePack([])),
+            strategies=["dense", "bm25"],
+        )
+
+        fused = await pipeline._run_hybrid_queries("q", plan, [1])
+
+        assert {h.chunk_index for h in fused} == {0, 1}
+        dense.retrieve.assert_awaited_once()
+        bm25.retrieve.assert_awaited_once()
+        entity.retrieve.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_none_whitelist_runs_all_planner_strategies(self):
+        """``None`` 白名单等价于不限定：planner ∩ 注入集合全部调用。"""
+        dense = _retriever("dense", [_hit(1, 0)])
+        bm25 = _retriever("bm25", [_hit(1, 1)])
+        plan = QueryPlan(sub_queries=["q"], strategies=["dense", "bm25"])
+        pipeline = _pipeline(
+            {"dense": dense, "bm25": bm25}, _planner(plan), _reranker(),
+            _agent(EvidencePack([])),
+        )
+
+        fused = await pipeline._run_hybrid_queries("q", plan, [1])
+
+        assert {h.chunk_index for h in fused} == {0, 1}
+        dense.retrieve.assert_awaited_once()
+        bm25.retrieve.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_empty_whitelist_retrieves_nothing(self):
+        """空白名单 ``[]`` 降级为空结果：任何检索器都不被调用。"""
+        dense = _retriever("dense", [_hit(1, 0)])
+        plan = QueryPlan(sub_queries=["q"], strategies=["dense"])
+        pipeline = _pipeline(
+            {"dense": dense}, _planner(plan), _reranker(),
+            _agent(EvidencePack([])), strategies=[],
+        )
+
+        fused = await pipeline._run_hybrid_queries("q", plan, [1])
+
+        assert fused == []
+        dense.retrieve.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_whitelist_intersects_with_injected_retrievers(self):
+        """白名单含未注入策略时按交集过滤，不报错也不调用。"""
+        dense = _retriever("dense", [_hit(1, 0)])
+        plan = QueryPlan(sub_queries=["q"], strategies=["dense", "bm25"])
+        pipeline = _pipeline(
+            {"dense": dense}, _planner(plan), _reranker(),
+            _agent(EvidencePack([])), strategies=["dense", "chapter"],
+        )
+
+        fused = await pipeline._run_hybrid_queries("q", plan, [1])
+
+        assert len(fused) == 1
+        dense.retrieve.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_evidence_loop_does_not_escape_whitelist(self):
+        """证据循环补充检索复用并行检索入口：最终证据 strategy ⊆ 白名单。"""
+        dense = _retriever("dense")
+        dense.retrieve = AsyncMock(side_effect=[
+            [_hit(1, 0)],   # 首轮检索
+            [_hit(1, 1)],   # 补充检索（judge 不足后）
+        ])
+        bm25 = _retriever("bm25", [_hit(1, 9)])
+        plan = QueryPlan(sub_queries=["q"], strategies=["dense", "bm25"])
+        pipeline = HybridRetrievalPipeline(
+            retrievers={"dense": dense, "bm25": bm25},
+            planner=_planner(plan),
+            reranker=_reranker(),
+            strategies=["dense"],
+            top_k=5,
+            fused_top_n=5,
+        )
+        # 用假 LLM 驱动默认构造的 EvidenceAgent——其 retrieve_fn 已绑定
+        # 管线并行检索入口 ``_run_hybrid_queries``（真实装配路径）。
+        pipeline._agent._llm = _FakeEvidenceLLM()
+
+        pack = await pipeline.retrieve("Q", [1])
+
+        assert {h.strategy for h in pack.hits} <= {"dense"}
+        assert pack.iterations == 1  # 确实发生过一轮补充检索
+        bm25.retrieve.assert_not_awaited()
+        # 首轮 + 补充轮均走白名单约束
         assert dense.retrieve.await_count == 2
