@@ -21,6 +21,9 @@ EXPECTED_METHODS = {
     # #76：聊天端点迁移至 v1（旧 /api/chat 路径下线）
     "/api/v1/chat": {"POST"},
     "/api/v1/chat/stream": {"POST"},
+    # #77：v2 聊天端点（接入层固定传入子集检索策略白名单，契约与 v1 一致）
+    "/api/v2/chat": {"POST"},
+    "/api/v2/chat/stream": {"POST"},
     # #36：全量 /api/chat/history 废除，统一走 /api/conversations/{id}/messages
     "/api/conversations": {"GET", "POST"},
     "/api/conversations/{conversation_id}": {"DELETE", "PATCH"},
