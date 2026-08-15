@@ -1,4 +1,5 @@
 """Unit tests for the E2E LLM mock driven by the ``X-E2E-Test`` header."""
+import json
 from unittest.mock import patch
 
 import pytest
@@ -8,6 +9,7 @@ from app.services.mock_llm import (
     E2E_MOCK_THINKING_HEADER,
     MOCK_CHUNK_SIZE,
     MOCK_LLM_ANSWER,
+    MOCK_PLAN_RESPONSE,
     MOCK_THINKING_PREFIX,
     MockLLMProvider,
 )
@@ -87,6 +89,47 @@ class TestMockLLMProvider:
         assert chunks[0] == MOCK_THINKING_PREFIX
         joined_after_thinking = "".join(chunks[1:])
         assert joined_after_thinking == MOCK_LLM_ANSWER
+
+
+class TestMockPlanResponseAvailableStrategies:
+    """#79：查询规划 mock 按 prompt 中的可用策略列表返回（不越界、可断言）。"""
+
+    def test_extract_available_strategies_from_prompt_line(self):
+        prompt = "[QUERY_PLAN]\n可用策略列表：dense, bm25\n用户问题：Q"
+        assert MockLLMProvider._extract_available_strategies(prompt) == ["dense", "bm25"]
+
+    def test_extract_missing_line_returns_none(self):
+        """旧 prompt 格式（无可用策略行）→ ``None``（调用方回退全量五路）。"""
+        assert MockLLMProvider._extract_available_strategies("[QUERY_PLAN] 无列表") is None
+
+    def test_extract_tolerates_spaces_and_empties(self):
+        prompt = "可用策略列表：dense,  bm25, ,entity\n用户问题：Q"
+        assert MockLLMProvider._extract_available_strategies(prompt) == [
+            "dense", "bm25", "entity",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_plan_response_uses_available_strategies(self):
+        """prompt 可用策略为 v2 子集时，mock 计划 strategies 即该子集。"""
+        provider = MockLLMProvider()
+        prompt = (
+            "[QUERY_PLAN]\n可用策略列表：dense, bm25\n"
+            "用户问题：主角是谁？"
+        )
+        raw = await provider.chat([{"role": "user", "content": prompt}])
+        payload = json.loads(raw)
+        assert payload["strategies"] == ["dense", "bm25"]
+        assert payload["sub_queries"] == ["主角是谁？"]
+
+    @pytest.mark.asyncio
+    async def test_plan_response_falls_back_to_full_set_without_line(self):
+        """旧 prompt（无可用策略行）→ 全量五路（与 #66 mock 行为一致）。"""
+        provider = MockLLMProvider()
+        raw = await provider.chat(
+            [{"role": "user", "content": "[QUERY_PLAN]\n用户问题：Q"}]
+        )
+        payload = json.loads(raw)
+        assert payload["strategies"] == MOCK_PLAN_RESPONSE["strategies"]
 
 
 class TestGetLLMProviderHeaderSwitch:

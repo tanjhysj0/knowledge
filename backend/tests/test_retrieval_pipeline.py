@@ -8,7 +8,11 @@
 
 #75：可选 ``strategies`` 白名单——生效集合 = 白名单 ∩ 注入集合 ∩
 Planner 建议；``None`` 等价于不限定；证据循环补充检索不逃逸白名单。
+
+#79：生效集合为对象子集（:attr:`_active_retrievers`）且注入默认 planner
+——planner 建议 ⊆ 生效集合，与并行检索 / 证据循环共用单一来源。
 """
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -18,7 +22,7 @@ from app.services.retrieval.agent import JUDGE_MARKER, PLAN_QUERIES_MARKER
 from app.services.retrieval.assembly import settings as assembly_settings
 from app.services.retrieval.evidence import EvidencePack
 from app.services.retrieval.pipeline import HybridRetrievalPipeline
-from app.services.retrieval.planner import QueryPlan
+from app.services.retrieval.planner import AVAILABLE_STRATEGIES_LINE, QueryPlan
 
 
 def _hit(doc_id: int, chunk: int, score: float = 0.8) -> RetrievalHit:
@@ -340,3 +344,111 @@ class TestStrategiesWhitelist:
         bm25.retrieve.assert_not_awaited()
         # 首轮 + 补充轮均走白名单约束
         assert dense.retrieve.await_count == 2
+
+
+class _CapturePlannerLLM:
+    """记录 planner prompt 的假 LLM：返回固定计划（strategies 仅 dense）。"""
+
+    def __init__(self):
+        self.prompts: list = []
+
+    async def chat(self, messages, **kwargs):
+        self.prompts.append(messages[0]["content"])
+        return json.dumps(
+            {"sub_queries": ["q"], "strategies": ["dense"]}, ensure_ascii=False
+        )
+
+
+class TestActiveRetrieversInjectedIntoPlanner:
+    """#79：生效检索器对象集合 = 白名单 ∩ 注入集合，注入默认 planner。"""
+
+    def test_active_retrievers_intersects_whitelist(self):
+        """白名单 ∩ 注入集合 → 对象子集；``None`` 白名单等价注入全集。"""
+        dense = _retriever("dense")
+        entity = _retriever("entity")
+        pipeline = _pipeline(
+            {"dense": dense, "entity": entity}, _planner(QueryPlan()),
+            _reranker(), _agent(EvidencePack([])), strategies=["dense"],
+        )
+        assert pipeline._active_retrievers == {"dense": dense}
+
+        full = _pipeline(
+            {"dense": dense, "entity": entity}, _planner(QueryPlan()),
+            _reranker(), _agent(EvidencePack([])),
+        )
+        assert full._active_retrievers == {"dense": dense, "entity": entity}
+
+    @pytest.mark.asyncio
+    async def test_default_planner_prompt_reflects_active_set(self):
+        """默认 planner 注入生效集合：prompt 可用策略列表 = 白名单 ∩ 注入集合。"""
+        capture = _CapturePlannerLLM()
+        dense = _retriever("dense", [_hit(1, 0)])
+        entity = _retriever("entity", [_hit(1, 2)])
+        pipeline = HybridRetrievalPipeline(
+            retrievers={"dense": dense, "entity": entity},
+            reranker=_reranker(),
+            strategies=["dense"],
+            top_k=5,
+            fused_top_n=5,
+        )
+        # 不注入 planner：管线默认 QueryPlanner 已携带生效集合，仅挂接假 LLM
+        pipeline._planner._llm = capture
+        pipeline._agent = _agent(EvidencePack([]))
+
+        await pipeline.retrieve("Q", [1])
+
+        prompt = capture.prompts[0]
+        line = next(
+            l for l in prompt.splitlines() if l.startswith(AVAILABLE_STRATEGIES_LINE)
+        )
+        assert line == AVAILABLE_STRATEGIES_LINE + "dense"
+        # planner 建议与并行检索共用同一生效集合（白名单外 entity 从未被调用）
+        entity.retrieve.assert_not_awaited()
+        dense.retrieve.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_planner_plan_subset_of_active_retrievers(self):
+        """真实 planner 经解析层过滤：plan.strategies ⊆ 生效集合。"""
+        capture = _CapturePlannerLLM()
+        capture.chat = AsyncMock(
+            return_value=json.dumps(
+                {"sub_queries": ["q"], "strategies": ["dense", "entity", "chapter"]}
+            )
+        )
+        pipeline = HybridRetrievalPipeline(
+            retrievers={"dense": _retriever("dense", [_hit(1, 0)]), "bm25": _retriever("bm25")},
+            reranker=_reranker(),
+            strategies=["dense", "bm25"],
+            top_k=5,
+            fused_top_n=5,
+        )
+        pipeline._planner._llm = capture
+        pipeline._agent = _agent(EvidencePack([]))
+
+        # 越界建议（entity/chapter）在解析层被过滤，plan.strategies ⊆ 生效集合
+        plan = await pipeline._planner.plan("Q")
+        assert plan.strategies == ["dense"]
+
+        await pipeline.retrieve("Q", [1])
+        # 并行检索与 plan 共用同一生效集合：bm25 注入但未建议 → 不被调用
+        pipeline._retrievers["bm25"].retrieve.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_empty_active_set_retrieves_nothing(self):
+        """生效集合本身为空 → 检索结果为空（符合现有语义）。"""
+        capture = _CapturePlannerLLM()
+        dense = _retriever("dense", [_hit(1, 0)])
+        pipeline = HybridRetrievalPipeline(
+            retrievers={"dense": dense},
+            reranker=_reranker(),
+            strategies=[],
+            top_k=5,
+            fused_top_n=5,
+        )
+        pipeline._planner._llm = capture
+        pipeline._agent = _agent(EvidencePack([]))
+
+        pack = await pipeline.retrieve("Q", [1])
+
+        assert pack.hits == []
+        dense.retrieve.assert_not_awaited()

@@ -55,6 +55,8 @@ class BM25Retriever:
     """基于 ``bm25_chunks`` 表的 BM25 检索（策略名 ``bm25``）。"""
 
     strategy = "bm25"
+    # #79：settings 开关字段名自描述（装配层按类属性过滤，无独立映射表）。
+    switch = "retrieval_bm25_enabled"
 
     def __init__(self, session_factory=None):
         # session 工厂可注入（单测用 fake session）；默认走应用全局工厂。

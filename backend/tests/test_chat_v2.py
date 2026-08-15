@@ -386,17 +386,19 @@ class _V2PipelineLLM:
 
     def __init__(self):
         self.judge_calls = 0
+        self.planner_prompts: list = []
 
     async def chat(self, messages, **kwargs):
         content = messages[0]["content"]
         if PLANNER_MARKER in content:
+            self.planner_prompts.append(content)
             return json.dumps(
                 {
                     "sub_queries": ["主查询"],
                     "entities": [],
                     "events": [],
                     "chapter_hints": [],
-                    # entity 在白名单外：planner 建议它，白名单应将其过滤
+                    # entity 在白名单外：planner 建议它，解析层应将其过滤
                     "strategies": ["dense", "bm25", "entity"],
                 },
                 ensure_ascii=False,
@@ -461,6 +463,16 @@ class TestV2EvidenceStrategiesWithinWhitelist:
                 request=request, payload=payload, db=_fake_db()
             )
             events = await _collect_sse_dicts(response.body_iterator)
+
+        # #79：planner prompt 的可用策略列表 = v2 白名单（dense + bm25），
+        # 建议越界的 entity 在解析层被过滤（planner 建议 ⊆ 生效集合）
+        from app.services.retrieval.planner import AVAILABLE_STRATEGIES_LINE
+
+        prompt = fake_llm.planner_prompts[0]
+        line = next(
+            l for l in prompt.splitlines() if l.startswith(AVAILABLE_STRATEGIES_LINE)
+        )
+        assert line == AVAILABLE_STRATEGIES_LINE + "dense, bm25"
 
         # 证据循环发生了补充检索：dense / bm25 各被调用两次（首轮 + 补充）
         assert dense.retrieve.await_count == 2

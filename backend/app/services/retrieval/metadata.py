@@ -68,6 +68,8 @@ class ChapterRetriever(_AnchorSessionMixin):
     """章节检索器（策略名 ``chapter``）。"""
 
     strategy = "chapter"
+    # #79：settings 开关字段名自描述（装配层按类属性过滤，无独立映射表）。
+    switch = "retrieval_chapter_enabled"
 
     def decorate_query(self, query: str, plan: QueryPlan) -> str:
         """#74：把 QueryPlan 章节线索拼进检索词（管线不再感知策略名）。"""
@@ -137,6 +139,8 @@ class EntityRetriever(_AnchorSessionMixin):
     """实体检索器（策略名 ``entity``）——由 QueryPlan 实体线索或 query 词驱动。"""
 
     strategy = "entity"
+    # #79：settings 开关字段名自描述（装配层按类属性过滤，无独立映射表）。
+    switch = "retrieval_entity_enabled"
 
     def decorate_query(self, query: str, plan: QueryPlan) -> str:
         """#74：把 QueryPlan 实体线索拼进检索词（管线不再感知策略名）。"""
@@ -187,6 +191,8 @@ class EventRetriever(_AnchorSessionMixin):
     """事件检索器（策略名 ``event``）——query 词与事件名重叠即命中。"""
 
     strategy = "event"
+    # #79：settings 开关字段名自描述（装配层按类属性过滤，无独立映射表）。
+    switch = "retrieval_event_enabled"
 
     def decorate_query(self, query: str, plan: QueryPlan) -> str:
         """#74：把 QueryPlan 事件线索拼进检索词（管线不再感知策略名）。"""

@@ -1,7 +1,7 @@
 """E2E 测试专用的 LLM Provider。"""
 import json
 import re
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict, List, Optional
 
 E2E_TEST_HEADER = "x-e2e-test"
 E2E_MOCK_THINKING_HEADER = "x-e2e-mock-thinking"
@@ -75,14 +75,33 @@ class MockLLMProvider:
 
     @staticmethod
     def _mock_plan_response(prompt: str) -> str:
-        """planner mock：sub_queries 回填 prompt 中的原问题（dense 检索不受影响）。"""
+        """planner mock：sub_queries 回填 prompt 中的原问题（dense 检索不受影响）。
+
+        #79：strategies 按 prompt 中动态生成的可用策略列表返回（v1 全量 /
+        v2 子集均可断言、不越界）；prompt 无可用策略行（旧格式）时回退
+        全量五路（向后兼容）。
+        """
         question = "mock sub query"
         match = re.search(r"用户问题：\s*(.*)$", prompt)
         if match:
             question = match.group(1).strip()
         response = dict(MOCK_PLAN_RESPONSE)
         response["sub_queries"] = [question]
+        available = MockLLMProvider._extract_available_strategies(prompt)
+        if available is not None:
+            response["strategies"] = available
         return json.dumps(response, ensure_ascii=False)
+
+    @staticmethod
+    def _extract_available_strategies(prompt: str) -> Optional[List[str]]:
+        """从 planner prompt 的"可用策略列表："行提取策略名列表。
+
+        无该行（旧 prompt 格式）返回 ``None``（调用方回退全量五路）。
+        """
+        match = re.search(r"可用策略列表：(.+)", prompt)
+        if not match:
+            return None
+        return [s.strip() for s in match.group(1).split(",") if s.strip()]
 
     async def stream_chat(
         self,

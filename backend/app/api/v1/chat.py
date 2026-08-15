@@ -4,6 +4,10 @@
 v1 路由在接入层显式传入全量五路检索策略白名单（:data:`CHAT_STRATEGIES`），
 行为与迁移前完全一致（答案 / sources / SSE 事件序列不变）。
 
+#79：v1 白名单动态化——改为装配层推导的"当前启用全集"（settings 开关开启
+的已登记检索器，忠实还原迁移前"默认生效策略集合"语义）；新增检索器 + 打开
+开关即自动进入 v1。
+
 #36：会话上下文隔离 - ``ChatRequest.conversation_id`` 由 Pydantic 强制必填，
 ``chat_service`` 进一步校验会话存在 (404)；多轮上下文严格按会话 id 过滤，
 不再保留全局 ``GET /api/chat/history`` 端点（前端已统一走
@@ -23,12 +27,14 @@ from app.models.schemas import ChatRequest, ChatResponse
 from app.services import chat as chat_service
 from app.services.conversations import ConversationNotFoundError
 from app.services.llm import is_llm_configured
+from app.services.retrieval.assembly import enabled_strategy_names
 
 router = APIRouter()
 
-# #76：v1 接入层显式传入的全量五路检索策略白名单（与迁移前默认生效
-# 策略集合一致：dense / bm25 / entity / event / chapter）。
-CHAT_STRATEGIES = ["dense", "bm25", "entity", "event", "chapter"]
+# #79：v1 接入层的"当前启用全集"白名单——由装配层按 settings 开关推导
+# （默认全开 = 五路全量，与迁移前默认生效策略集合一致）；新增检索器 +
+# 打开开关即自动进入 v1（v2 保持显式业务子集，见 :mod:`app.api.v2.chat`）。
+CHAT_STRATEGIES = enabled_strategy_names()
 
 
 @router.post("", response_model=ChatResponse)
@@ -39,7 +45,7 @@ async def chat(
 ):
     """Non-streaming RAG-based chat endpoint.
 
-    #76：接入层显式传入全量检索策略白名单（:data:`CHAT_STRATEGIES`）。
+    #76/#79：接入层传入动态推导的"当前启用全集"白名单（:data:`CHAT_STRATEGIES`）。
     #45：preflight 不通过时直接返回 503，不调 LLM / 不写库。
     """
     configured, reason = is_llm_configured()
@@ -75,7 +81,7 @@ async def chat_stream(
     单条 ``event: error`` SSE，事件 ``data.error`` 携带 404 信息，前端
     据此提示用户刷新页面。
 
-    #76：接入层显式传入全量检索策略白名单（:data:`CHAT_STRATEGIES`）。
+    #76/#79：接入层传入动态推导的"当前启用全集"白名单（:data:`CHAT_STRATEGIES`）。
     #45：preflight 不通过时立即产 ``error`` + ``done`` SSE，不调 LLM / 不写库。
     # mock 只替换 provider 选择（get_llm_provider），不绕过配置守卫；
     # E2E 聊天 spec 由 modelsGuard 在 setup 阶段写入 dummy key。

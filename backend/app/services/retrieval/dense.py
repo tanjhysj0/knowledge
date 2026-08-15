@@ -19,6 +19,8 @@ class DenseRetriever:
     """PG/pgvector dense 向量检索（策略名 ``dense``）。"""
 
     strategy = "dense"
+    # #79：settings 开关字段名自描述（装配层按类属性过滤，无独立映射表）。
+    switch = "retrieval_dense_enabled"
 
     def __init__(self, vector_store: Optional[VectorStoreService] = None):
         # 底层存储可注入（单测 mock）；默认每次构造新实例与旧行为一致。
