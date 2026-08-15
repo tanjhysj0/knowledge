@@ -221,6 +221,22 @@ class VectorStoreService:
             session.execute(stmt)
             session.commit()
 
+    def has_vectors(self, document_id: int) -> bool:
+        """#72：判断小说是否已有 dense 向量（重建脚本按此跳过）。
+
+        表不存在视为无向量；已删除/半写入的残留行与正常向量同判。
+        """
+        if not self._table_exists(CHUNKS_TABLE):
+            return False
+
+        with self._session() as session:
+            result = session.execute(
+                select(VectorChunk.id)
+                .where(VectorChunk.document_id == document_id)
+                .limit(1)
+            )
+            return result.first() is not None
+
     def delete_by_document_id(self, document_id: int) -> None:
         """Delete all chunks and the stored full text for a document (#71).
 

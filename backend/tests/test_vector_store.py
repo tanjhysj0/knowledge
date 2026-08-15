@@ -63,9 +63,10 @@ class _FakeEngine:
 class _FakeSession:
     """最小假同步 session：记录 execute 语句与 commit。"""
 
-    def __init__(self, rows=None, ids=None):
+    def __init__(self, rows=None, ids=None, first_result=None):
         self._rows = rows or []
         self._ids = ids or []
+        self._first_result = first_result
         self.statements = []
         self.commits = 0
 
@@ -80,6 +81,7 @@ class _FakeSession:
         result = MagicMock()
         result.scalars.return_value = iter(self._ids)
         result.all.return_value = self._rows
+        result.first.return_value = self._first_result
         return result
 
     def commit(self):
@@ -389,3 +391,29 @@ class TestSaveDocumentText:
                 service.save_document_text(1, "全文")
 
         mock_create.assert_called_once()
+
+
+class TestHasVectors:
+    """``has_vectors`` 幂等判断（#72 重建脚本按此跳过）。"""
+
+    def test_returns_false_when_table_missing(self):
+        service, _, _ = _make_service(tables=())
+
+        with _patch_has_table(service):
+            assert service.has_vectors(1) is False
+
+    def test_returns_true_when_row_exists(self):
+        session = _FakeSession(first_result=MagicMock())
+        service, _, _ = _make_service(session=session)
+
+        with _patch_has_table(service):
+            assert service.has_vectors(1) is True
+
+        assert len(session.statements) == 1
+
+    def test_returns_false_when_no_rows(self):
+        session = _FakeSession(first_result=None)
+        service, _, _ = _make_service(session=session)
+
+        with _patch_has_table(service):
+            assert service.has_vectors(1) is False

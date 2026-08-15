@@ -20,6 +20,8 @@ dense 向量存储在 Milvus standalone（依赖 etcd + minio 三件套）：
 ### 2. 全文入库：`document_texts` 表
 解析后的全文随上传索引写入（幂等 upsert，每本小说一行），删除小说时随向量级联清理；可从库中完整还原解析后文本。
 
+迁移后存量 ready 小说的 dense 向量与全文由 `scripts/rebuild_dense_indexes.py` 重建补齐（#72）：重新解析原文 → 全文入库 → 分块 → 重嵌入 → 写入 `vector_chunks`；默认跳过已有向量的小说，`--all` 强制重建、`--id` 指定单本。
+
 ### 3. 连接策略：同步 psycopg2 独立连接
 `VectorStoreService` 保持同步接口（调用方在 executor 线程中调用），使用 psycopg2 驱动同步 engine，与既有调用点（DenseRetriever 检索、后台索引、删除清理）零改动衔接。主业务链路继续走 asyncpg 异步会话，两者互不干扰。
 
