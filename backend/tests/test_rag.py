@@ -220,7 +220,7 @@ class TestAretrieve:
         ) as mock_retrieve:
             await rag.aretrieve("Q", [1])
 
-        mock_retrieve.assert_awaited_once_with("Q", [1], 5, None)
+        mock_retrieve.assert_awaited_once_with("Q", [1], None, None)
 
 
 class TestRAGServiceAnswer:

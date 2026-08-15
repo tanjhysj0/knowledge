@@ -190,7 +190,7 @@ class TestAsk:
 
         assert result == {"answer": "Hello back", "sources": ["doc_1"]}
         mock_instance.aretrieve.assert_called_once_with(
-            question="Hi", document_ids=[1], top_k=5, history=[]
+            question="Hi", document_ids=[1], history=[]
         )
         # 命中时使用 RAG prompt
         mock_instance._build_rag_prompt.assert_called_once()
@@ -328,7 +328,7 @@ class TestReadyDocumentFilter:
 
         # 仅 ready 的 id=2 参与检索
         mock_instance.aretrieve.assert_called_once_with(
-            question="Q", document_ids=[2], top_k=5, history=[]
+            question="Q", document_ids=[2], history=[]
         )
         # 落库的 user 消息仍存原始 ids
         users = [obj for obj in db.added if obj.role == "user"]
@@ -359,7 +359,7 @@ class TestReadyDocumentFilter:
             )
 
         mock_instance.aretrieve.assert_called_once_with(
-            question="Q", document_ids=[], top_k=5, history=[]
+            question="Q", document_ids=[], history=[]
         )
         mock_instance._build_external_prompt.assert_called_once()
         mock_instance._build_rag_prompt.assert_not_called()
@@ -388,7 +388,7 @@ class TestReadyDocumentFilter:
             )
 
         mock_instance.aretrieve.assert_called_once_with(
-            question="Q", document_ids=[6], top_k=5, history=[]
+            question="Q", document_ids=[6], history=[]
         )
 
 
