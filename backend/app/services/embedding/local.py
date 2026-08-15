@@ -25,7 +25,7 @@ class LocalSentenceTransformerProvider:
     - 模型对象在首次 :meth:`embed_texts` 调用时 lazy 加载；不调用则不下载/不占内存。
     - ``embed_texts`` 是同步阻塞（CPU 密集）；调用方负责 ``run_in_executor``。
     - 向量结果以 Python ``list[float]`` 返回（numpy 数组 ``.tolist()``），避免
-      JSON 序列化或 Milvus 写入时类型不匹配。
+      JSON 序列化或向量存储写入时类型不匹配。
     """
 
     def __init__(
@@ -79,5 +79,5 @@ class LocalSentenceTransformerProvider:
             convert_to_numpy=True,
             show_progress_bar=False,
         )
-        # numpy.ndarray → Python list[float]（JSON / Milvus 友好）
+        # numpy.ndarray → Python list[float]（JSON / 向量存储友好）
         return [vector.tolist() for vector in embeddings]

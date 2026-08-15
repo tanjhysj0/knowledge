@@ -7,7 +7,7 @@
 - **前端**: React (Vite) + TypeScript
 - **后端**: Python 3.11 + FastAPI
 - **AI 框架**: LlamaIndex
-- **向量数据库**: Milvus
+- **向量存储**: PostgreSQL pgvector（#71 自 Milvus 迁移）
 - **关系数据库**: PostgreSQL
 - **嵌入模型**: OpenAI text-embedding-3-small
 - **LLM**: OpenAI GPT-4o-mini
@@ -22,8 +22,7 @@ docker-compose up -d
 
 验证服务启动：
 
-- Milvus Attu (Web UI): http://localhost:9091
-- PostgreSQL: localhost:5432
+- PostgreSQL (pgvector): localhost:5432
 
 ### 2. 配置环境变量
 

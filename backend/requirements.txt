@@ -5,7 +5,11 @@ pydantic==2.7.4
 pydantic-settings==2.2.1
 sqlalchemy==2.0.31
 asyncpg==0.29.0
-pymilvus==2.4.4
+# #71：dense 向量存储迁至 PostgreSQL/pgvector（取代 Milvus）。
+# psycopg2-binary 提供 VectorStoreService 的同步连接；pgvector 提供
+# SQLAlchemy ``Vector`` 类型与余弦算子绑定。
+pgvector>=0.3.0
+psycopg2-binary>=2.9.9
 anthropic>=0.39.0  # 0.39+ 兼容 httpx>=0.28（修复 #26：proxies kwarg 已被 httpx 0.28 移除）
 pdfplumber==0.11.0
 python-docx==1.1.0

@@ -22,7 +22,7 @@
 | 术语 | 用途 |
 |------|------|
 | LlamaIndex | Python AI 框架，简化 LLM + RAG 开发 |
-| Milvus | 开源向量数据库，高性能向量存储与检索 |
+| pgvector | PostgreSQL 向量扩展，dense 向量存储与 COSINE 检索（#71 取代 Milvus） |
 | FastAPI | Python Web 框架，支持异步和自动 OpenAPI 文档 |
 | pdfplumber | PDF 文本提取库 |
 | python-docx | Word 文档解析库 |

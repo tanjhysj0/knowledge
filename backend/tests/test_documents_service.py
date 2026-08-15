@@ -585,6 +585,8 @@ class TestProcessDocumentIndex:
         ) as mock_get_provider, patch.object(
             document_service.VectorStoreService, "insert"
         ) as mock_insert, patch.object(
+            document_service.VectorStoreService, "save_document_text"
+        ) as mock_save_text, patch.object(
             document_service.VectorStoreService, "__init__", return_value=None
         ):
             mock_provider = MagicMock()
@@ -598,7 +600,7 @@ class TestProcessDocumentIndex:
 
             await _process_document_index(db, document_id=5)
 
-        return mock_insert
+        return mock_insert, mock_save_text
 
     @pytest.mark.asyncio
     async def test_success_stages_progress_and_ends_ready(self):
@@ -607,7 +609,9 @@ class TestProcessDocumentIndex:
         chunks = ["c1", "c2"]
         embeddings = [[0.1], [0.2]]
 
-        mock_insert = await self._run(db, chunks=chunks, embed=embeddings)
+        mock_insert, mock_save_text = await self._run(
+            db, chunks=chunks, embed=embeddings
+        )
 
         assert doc.status == "ready"
         assert doc.progress == 100
@@ -618,6 +622,8 @@ class TestProcessDocumentIndex:
         assert db.progress_log[0][0] == "processing"
         assert db.progress_log[-1][0] == "ready"
         mock_insert.assert_called_once_with(5, chunks, embeddings)
+        # #71：解析后的全文在分块前入库（document_texts）。
+        mock_save_text.assert_called_once_with(5, "text body")
 
     @pytest.mark.asyncio
     async def test_parse_failure_marks_failed_with_error_message(self):
@@ -629,7 +635,9 @@ class TestProcessDocumentIndex:
             side_effect=ValueError("boom"),
         ), patch.object(
             document_service, "_delete_vectors_quietly"
-        ) as mock_cleanup:
+        ) as mock_cleanup, patch.object(
+            document_service.VectorStoreService, "__init__", return_value=None
+        ):
             await _process_document_index(db, document_id=5)
 
         assert doc.status == "failed"
@@ -684,10 +692,10 @@ class TestProcessDocumentIndex:
         with patch.object(
             document_service, "_delete_vectors_quietly"
         ) as mock_cleanup:
-            await self._run(db, insert_error=RuntimeError("milvus down"))
+            await self._run(db, insert_error=RuntimeError("vector store down"))
 
         assert doc.status == "failed"
-        assert "milvus down" in doc.error_message
+        assert "vector store down" in doc.error_message
         mock_cleanup.assert_called_once_with(5)
 
     @pytest.mark.asyncio
@@ -745,7 +753,7 @@ class TestRequeueDocumentIndex:
         doc = _make_doc(
             status="failed",
             progress=25,
-            error_message="milvus down",
+            error_message="vector store down",
             chunk_count=3,
         )
         db = _FakeAsyncSession(scalar_value=0, rows=[doc])
@@ -833,6 +841,8 @@ class TestProcessDocumentIndexEntry:
             document_service, "get_embedding_provider"
         ) as mock_get_provider, patch.object(
             document_service.VectorStoreService, "insert"
+        ), patch.object(
+            document_service.VectorStoreService, "save_document_text"
         ), patch.object(
             document_service.VectorStoreService, "__init__", return_value=None
         ):
@@ -977,7 +987,7 @@ class TestDeleteDocument:
         with patch.object(
             document_service.VectorStoreService,
             "delete_by_document_id",
-            side_effect=RuntimeError("milvus down"),
+            side_effect=RuntimeError("vector store down"),
         ):
             await delete_document(db, document_id=9)
 

@@ -74,7 +74,7 @@ class TestDenseRetriever:
     @pytest.mark.asyncio
     async def test_vector_store_failure_degrades_to_empty(self):
         store = _store()
-        store.search.side_effect = RuntimeError("milvus down")
+        store.search.side_effect = RuntimeError("vector store down")
         with patch("app.services.retrieval.dense.get_embedding_provider") as factory:
             factory.return_value = _provider()
             hits = await _retriever(store).retrieve("Q", None)
@@ -82,7 +82,7 @@ class TestDenseRetriever:
 
     @pytest.mark.asyncio
     async def test_mock_provider_short_circuits(self):
-        """mock embedding provider（零向量）短路，避免 Milvus 误命中。"""
+        """mock embedding provider（零向量）短路，避免 COSINE 检索误命中。"""
         store = _store()
         with patch("app.services.retrieval.dense.get_embedding_provider") as factory:
             factory.return_value = _provider(is_mock=True)

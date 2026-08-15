@@ -51,7 +51,11 @@ class DocumentChunkError(DocumentServiceError):
 
 
 class DocumentEmbeddingError(DocumentServiceError):
-    """生成 embedding 或写入向量库失败。"""
+    """生成 embedding 或写入向量存储失败。"""
+
+
+class DocumentStoreError(DocumentServiceError):
+    """解析后全文写入 PG 存储失败（#71）。"""
 
 
 class CoverTypeError(DocumentServiceError):
@@ -269,7 +273,7 @@ async def _embed_chunks(chunks: List[str]) -> List[List[float]]:
 async def _insert_vectors(
     document_id: int, chunks: List[str], embeddings: List[List[float]]
 ) -> None:
-    """写入 Milvus；异常翻译为 :class:`DocumentEmbeddingError`。"""
+    """写入 PG ``vector_chunks``（#71）；异常翻译为 :class:`DocumentEmbeddingError`。"""
     vector_store = VectorStoreService()
     loop = asyncio.get_running_loop()
     try:
@@ -280,6 +284,19 @@ async def _insert_vectors(
         raise DocumentEmbeddingError(
             f"Failed to insert into vector store: {exc}"
         ) from exc
+
+
+async def _save_document_text(document_id: int, text_content: str) -> None:
+    """解析后的全文写入 PG ``document_texts``（#71）；异常翻译为
+    :class:`DocumentStoreError`。"""
+    vector_store = VectorStoreService()
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(
+            None, vector_store.save_document_text, document_id, text_content
+        )
+    except Exception as exc:
+        raise DocumentStoreError(f"Failed to store document text: {exc}") from exc
 
 
 async def _process_document_index(db: AsyncSession, document_id: int) -> None:
@@ -304,6 +321,8 @@ async def _process_document_index(db: AsyncSession, document_id: int) -> None:
             raise DocumentEmptyError(
                 "Document is empty or contains no extractable text"
             )
+        # #71：解析后的全文入库（document_texts），可从库中完整还原文本。
+        await _save_document_text(document_id, text_content)
         await _update_progress(db, document, progress=PROGRESS_PARSED)
 
         chunks = await _chunk_text(text_content)

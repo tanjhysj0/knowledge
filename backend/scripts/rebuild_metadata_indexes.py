@@ -6,7 +6,7 @@
 - ``--all`` 强制重建（先清后建，含已有索引的小说）；
 - ``--id N`` 只重建指定小说。
 
-依赖 Milvus/PostgreSQL 服务与 embedding 模型可用（chunks 内容从
+依赖 PostgreSQL 服务与 embedding 模型可用（chunks 内容从
 ``bm25_chunks`` 无法读取时需要重新解析原文；本脚本直接从已上传文件
 重新解析分块，与上传管线一致）。
 """

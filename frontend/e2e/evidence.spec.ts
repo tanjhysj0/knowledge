@@ -73,7 +73,7 @@ cleanupTest.describe('Evidence 事件契约 - E2E (#66)', () => {
   });
 
   cleanupTest('evidence 事件与 done.evidence 契约 + judge 头控制循环', async ({ page, uploadedDocs }) => {
-    // 问题与文档内容同源，保证真实 bge-m3 embedding + Milvus 检索命中。
+    // 问题与文档内容同源，保证真实 bge-m3 embedding + pgvector 检索命中。
     const question = '青藤学院院长在紫雾森林里发现了会说话的石头';
     const filename = `evidence-${Date.now()}.txt`;
     await uploadViaApi(filename, `这本小说讲的是青藤学院的故事。${question}。`);
@@ -81,7 +81,7 @@ cleanupTest.describe('Evidence 事件契约 - E2E (#66)', () => {
     await uploadedDocs.track(filename);
 
     // 浏览器端发起：X-E2E-Test 由 playwright extraHTTPHeaders 注入，
-    // LLM 走 mock；检索走真实 embedding + Milvus。
+    // LLM 走 mock；检索走真实 embedding + pgvector。
     const streamText = await page.evaluate(
       async ({ question, filename, judgeHeader }: { question: string; filename: string; judgeHeader: string | null }) => {
         const convRes = await fetch('/api/conversations', {

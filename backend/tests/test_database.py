@@ -19,6 +19,8 @@ class _FakeConn:
         self.statements: list[str] = []
 
     async def run_sync(self, fn, *args, **kwargs):
+        # create_all 以标记形式记录，供顺序断言（扩展必须先于建表）。
+        self.statements.append("<create_all>")
         return None
 
     async def exec_driver_sql(self, statement):
@@ -109,3 +111,49 @@ class TestInitDbMigration:
         await database.init_db()
 
         assert "DROP TABLE IF EXISTS settings" in conn.statements
+
+    @pytest.mark.asyncio
+    async def test_enables_pgvector_extension(self, monkeypatch):
+        """#71：dense 向量存储迁至 pgvector，启动时启用 vector 扩展。"""
+        conn = _FakeConn()
+        monkeypatch.setattr(database, "get_engine", lambda: _FakeEngine(conn))
+
+        await database.init_db()
+
+        assert "CREATE EXTENSION IF NOT EXISTS vector" in conn.statements
+
+    @pytest.mark.asyncio
+    async def test_extension_enabled_before_create_all(self, monkeypatch):
+        """#71：扩展必须先于 create_all——vector_chunks 的 embedding 列
+        依赖 vector 类型，顺序颠倒会导致全新库初始化失败。"""
+        conn = _FakeConn()
+        monkeypatch.setattr(database, "get_engine", lambda: _FakeEngine(conn))
+
+        await database.init_db()
+
+        ext_idx = next(
+            i
+            for i, s in enumerate(conn.statements)
+            if "CREATE EXTENSION" in s
+        )
+        create_all_idx = conn.statements.index("<create_all>")
+        index_idx = next(
+            i
+            for i, s in enumerate(conn.statements)
+            if "ix_vector_chunks_embedding" in s
+        )
+        assert ext_idx < create_all_idx < index_idx
+
+    @pytest.mark.asyncio
+    async def test_creates_hnsw_cosine_index_on_vector_chunks(self, monkeypatch):
+        """#71：向量分块表建 HNSW/COSINE 索引（模型索引无法表达算子类）。"""
+        conn = _FakeConn()
+        monkeypatch.setattr(database, "get_engine", lambda: _FakeEngine(conn))
+
+        await database.init_db()
+
+        index_stmt = next(
+            s for s in conn.statements if "ix_vector_chunks_embedding" in s
+        )
+        assert "USING hnsw" in index_stmt
+        assert "vector_cosine_ops" in index_stmt

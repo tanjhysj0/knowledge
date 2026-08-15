@@ -1,7 +1,7 @@
 """#66：Chapter / Entity / Event 三路元数据检索器。
 
 三路检索都从 PostgreSQL 辅助索引表读线索，再由 ``bm25_chunks`` 表取原文
-chunk 内容（不依赖 Milvus，索引缺失时自动降级为空）：
+chunk 内容（不依赖向量存储，索引缺失时自动降级为空）：
 
 - ChapterRetriever：query 中的"第X章/节/回"编号或标题关键词 → 命中章节
   覆盖的 chunk 区间。

@@ -73,7 +73,7 @@ def test_router_module_contains_only_routing_dependencies():
         "aiofiles",
         "json",
         "os",
-        "pymilvus",
+        "pgvector",
         "sse_starlette.sse",
         "sqlalchemy",
         "app.core.database",

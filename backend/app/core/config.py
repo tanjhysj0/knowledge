@@ -4,11 +4,6 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    # Milvus
-    milvus_host: str = "localhost"
-    milvus_port: int = 19530
-    milvus_collection: str = "doc_qa_documents"
-
     # Embedding（默认 bge-m3 中英多语言 / dim=1024）
     embedding_provider: str = "local"  # "local" = sentence-transformers
     embedding_model: str = "BAAI/bge-m3"

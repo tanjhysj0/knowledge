@@ -10,8 +10,8 @@
 - ``dim`` 由 settings 读，与真实 provider 行为一致。
 - ``embed_texts`` 对每个输入返回一个全 0 向量（``[0.0] * dim``）。
   - **不保证检索质量**；纯占位。E2E 测试应避免依赖真实 RAG 命中。
-- ``is_mock = True`` 供调用方短路 Milvus 查询（零向量在 Milvus COSINE
-  metric 下可能返回 distance=0 被误命中；mock provider 不应参与检索）。
+- ``is_mock = True`` 供调用方短路向量检索（零向量在 COSINE
+  metric 下可能返回 distance=1 被误命中；mock provider 不应参与检索）。
 """
 
 from typing import List, Optional
@@ -23,7 +23,7 @@ class MockEmbeddingProvider:
     """Mock embedding provider：返回零向量，避免加载本地模型。
 
     通过类属性 :attr:`is_mock` 让调用方（:mod:`app.services.rag`）短路
-    Milvus 检索，避免零向量在 COSINE metric 下产生误命中。
+    向量检索，避免零向量在 COSINE metric 下产生误命中。
     """
 
     is_mock = True

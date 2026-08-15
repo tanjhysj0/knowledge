@@ -1,6 +1,6 @@
 """#66：BM25 检索器——jieba 分词 + 应用层 BM25 评分。
 
-方案选择（见 ADR-0005）：不依赖 Milvus sparse/BM25 function，也不依赖
+方案选择（见 ADR-0005）：不依赖外部向量库 sparse/BM25 function，也不依赖
 PostgreSQL 中文全文检索扩展（zhparser 需额外安装）。索引构建阶段把每个
 chunk 的 jieba tokens 存入 ``bm25_chunks`` 表，检索时按 ``document_ids``
 加载候选 chunk 后在应用层算 BM25（小说级语料单次加载规模可控）。

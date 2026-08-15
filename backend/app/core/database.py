@@ -53,12 +53,23 @@ async def init_db():
         from app.models.retrieval_index import (  # noqa: F401
             Bm25Chunk,
             ChapterAnchor,
+            DocumentText,
             EntityAnchor,
             EventAnchor,
+            VectorChunk,
         )
 
         async with engine.begin() as conn:
+            # #71：dense 向量存储迁至 pgvector——扩展必须先于 create_all：
+            # create_all 建 vector_chunks 时 embedding 列依赖 vector 类型。
+            await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
             await conn.run_sync(Base.metadata.create_all)
+            # HNSW/COSINE 索引（模型索引定义无法表达 vector_cosine_ops
+            # 算子类，故内联）。
+            await conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_vector_chunks_embedding "
+                "ON vector_chunks USING hnsw (embedding vector_cosine_ops)"
+            )
             # #70：旧 settings 单行表已迁移入 llm_models（#68），启动时删除
             # 遗留物理表（幂等；存量数据库清理，新库无此表也不报错）。
             await conn.exec_driver_sql("DROP TABLE IF EXISTS settings")

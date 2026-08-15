@@ -7,14 +7,13 @@
 运行 E2E 测试前需要启动后端服务：
 
 ```bash
-# 1. 启动 docker-compose (PostgreSQL + Milvus)
+# 1. 启动 docker-compose (PostgreSQL/pgvector)
 cd /Users/jason/go/src/knowledge
 docker-compose up -d
 
 # 2. 启动后端 API
 cd backend
 export POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_USER=docqa POSTGRES_PASSWORD=docqa POSTGRES_DB=docqa
-export MILVUS_HOST=localhost MILVUS_PORT=19530
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 # 3. 启动前端并运行测试

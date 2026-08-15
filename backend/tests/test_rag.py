@@ -3,7 +3,7 @@
 测试策略
 --------
 - ``get_embedding_provider`` + ``VectorStoreService.search`` 全 mock 化；
-  不调真实 bge-m3 / Milvus
+  不调真实 bge-m3 / 向量存储
 - ``RAGService._llm`` 也 mock，使 answer/answer_stream 不依赖真实 LLM
 - 覆盖：检索命中 / 未命中 / 阈值过滤 / sources 去重 / embedding 异常回退 /
   vector_store 异常回退 / 空问题短路 / 异步执行不阻塞事件循环
@@ -87,7 +87,7 @@ class TestSearchChunks:
     def test_filters_out_hits_below_threshold(self):
         """相似度 < ``RETRIEVAL_SCORE_THRESHOLD`` 的命中被过滤。
 
-        pymilvus 对 COSINE metric 的 ``distance`` 字段即相似度（越大越相关）。
+        向量存储对 COSINE 检索返回的 ``distance`` 字段即相似度（越大越相关）。
         """
         hits = [
             _make_hit(1, 0, "relevant", 0.8),  # 留下
@@ -134,7 +134,7 @@ class TestSearchChunks:
     def test_vector_store_failure_returns_empty(self):
         """vector_store.search 抛异常时返回 ``[]``。"""
         rag, embedding_provider, _ = self._build_service(
-            search_raises=RuntimeError("milvus down")
+            search_raises=RuntimeError("vector store down")
         )
 
         with patch(

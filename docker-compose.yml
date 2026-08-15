@@ -1,69 +1,9 @@
+# #71：dense 向量存储迁至 PostgreSQL/pgvector，仅保留 postgres 服务。
 services:
-  milvus-etcd:
-    container_name: milvus-etcd
-    image: quay.io/coreos/etcd:v3.5.5
-    environment:
-      - ETCD_AUTO_COMPACTION_MODE=revision
-      - ETCD_AUTO_COMPACTION_RETENTION=1000
-      - ETCD_QUOTA_BACKEND_BYTES=4294967296
-      - ETCD_SNAPSHOT_COUNT=50000
-    volumes:
-      - milvus_etcd_data:/etcd
-    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2379/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - milvus
-
-  milvus-minio:
-    container_name: milvus-minio
-    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
-    environment:
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-    volumes:
-      - milvus_minio_data:/minio_data
-    command: minio server /minio_data --console-address ":9001"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - milvus
-
-  milvus-standalone:
-    container_name: milvus-standalone
-    image: milvusdb/milvus:v2.4.8
-    command: ["milvus", "run", "standalone"]
-    environment:
-      ETCD_ENDPOINTS: milvus-etcd:2379
-      MINIO_ADDRESS: milvus-minio:9000
-    volumes:
-      - milvus_data:/var/lib/milvus
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
-      interval: 10s
-      start_period: 90s
-      timeout: 5s
-      retries: 5
-    # #34 修正：宿主 backend Python 客户端默认走 localhost:19530，
-    # 之前 milvus-standalone 只挂上 bridge 网络、不暴露端口，导致文档上传
-    # （embeddings 写入向量库）连不上 Milvus。补上端口映射后后端可直接连接。
-    ports:
-      - "19530:19530"
-    depends_on:
-      - milvus-etcd
-      - milvus-minio
-    networks:
-      - milvus
-
   postgres:
     container_name: docqa-postgres
-    image: postgres:16-alpine
+    # pgvector 官方镜像：内置 vector 扩展，支持 HNSW/COSINE 检索。
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: docqa
       POSTGRES_PASSWORD: docqa
@@ -77,15 +17,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - milvus
 
 volumes:
-  milvus_etcd_data:
-  milvus_minio_data:
-  milvus_data:
   postgres_data:
-
-networks:
-  milvus:
-    driver: bridge

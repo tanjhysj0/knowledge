@@ -10,8 +10,8 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
-# pymilvus ``MilvusClient.search`` 对 COSINE metric 返回的 ``distance`` 字段
-# 实为余弦相似度（越大越相关，值域 [-1, 1]），与 L2 距离语义相反。
+# 向量存储对 COSINE 检索返回的 ``distance`` 字段实为余弦相似度
+# （越大越相关，值域 [-1, 1]），与 L2 距离语义相反。
 # 相似度低于该阈值的命中视为不相关、过滤掉（避免把无关文档塞进 prompt）。
 RETRIEVAL_SCORE_THRESHOLD = 0.5
 
@@ -85,7 +85,7 @@ Please answer this question based on your general knowledge."""
         相似度低于阈值的命中视为"假相关"丢弃。
 
         mock embedding provider（见 :class:`app.services.embedding.mock`）返回全
-        零向量，在 Milvus COSINE metric 下会触发相似度 1.0 的误命中。该场景
+        零向量，在 COSINE 检索下会触发相似度 1.0 的误命中。该场景
         （``provider.is_mock`` 为真）下直接短路为空，避免污染 RAG prompt 与
         ``sources``。
         """
@@ -97,7 +97,7 @@ Please answer this question based on your general knowledge."""
 
         try:
             provider = get_embedding_provider()
-            # mock provider 短路：避免零向量在 Milvus 触发误命中。
+            # mock provider 短路：避免零向量在 COSINE 检索下触发误命中。
             # 用严格 ``is True`` 判断，避免 ``MagicMock().is_mock`` 返回
             # 另一个 ``MagicMock``（真值）在单测里误命中短路。
             if getattr(provider, "is_mock", False) is True:
@@ -115,7 +115,7 @@ Please answer this question based on your general knowledge."""
                 limit=top_k,
                 document_ids=document_ids or None,
             )
-        except Exception:  # noqa: BLE001 — 向量库不可用时回退 external
+        except Exception:  # noqa: BLE001 — 向量存储不可用时回退 external
             return []
 
         filtered: List[Dict[str, Any]] = []

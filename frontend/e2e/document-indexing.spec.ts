@@ -166,7 +166,7 @@ cleanupTest.describe('上传与索引分离 - E2E (#63)', () => {
     await page.waitForLoadState('networkidle').catch(() => {});
 
     // 浏览器端发起：X-E2E-Test 头由 playwright 注入（LLM 走 mock），
-    // 检索走真实 embedding + Milvus。
+    // 检索走真实 embedding + pgvector。
     const result = await page.evaluate(
       async ({ question, filename }: { question: string; filename: string }) => {
         const convRes = await fetch('/api/conversations', {
