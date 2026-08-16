@@ -2,6 +2,9 @@
 # embedding：Infinity 独立 embedding 服务（BAAI/bge-m3 常驻，后端不再进程内加载模型）。
 # #82：新增 backend 服务，前端/后端纯容器部署（前端见 #83）。
 # #83：新增 frontend 服务，nginx 静态服务 + /api 反代 backend（SSE 不缓冲）。
+# #84：编排收尾——四服务全量健康检查，depends_on 全部升级为
+# condition: service_healthy 依赖链（postgres → embedding → backend → frontend），
+# 一键启动见根 README「容器部署」与 make docker-up。
 services:
   postgres:
     container_name: docqa-postgres

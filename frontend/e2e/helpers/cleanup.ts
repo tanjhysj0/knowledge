@@ -5,50 +5,20 @@
  * - Snapshot/restore the llm_models list so provider/key changes don't leak between specs
  */
 import { test as base, request as apiRequest, expect } from '@playwright/test';
-import fs from 'fs';
-import path from 'path';
 
 export const BACKEND_BASE = process.env.E2E_BACKEND_URL || 'http://localhost:8000';
 
 // #66 后续：preflight 无条件检查默认模型 api_key（chat.py 不再豁免 mock 请求），
-// E2E 必须保证默认模型 key 恒非空。E2E 向 DB 提交的默认模型一律来自仓库根
-// ``llm.config`` 的真实配置（不写入 e2e-model 之类的假记录）；llm.config
-// 缺失/解析失败时宁可跳过也不写入 dummy 模型。
-const REPO_ROOT = path.resolve(process.cwd(), '..');
-const LLM_CONFIG_PATH = path.join(REPO_ROOT, 'llm.config');
-
-interface LlmConfig {
-  providerType: string;
-  baseUrl: string;
-  modelName: string;
-  apiKey: string;
-}
-
-/**
- * 读取仓库根 ``llm.config`` 的真实 LLM 配置（api-key / base_url / model）。
- * 文件缺失或字段不完整时返回 null（调用方不得回退到 dummy 模型）。
- */
-function loadLlmConfig(): LlmConfig | null {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(LLM_CONFIG_PATH, 'utf-8');
-  } catch {
-    console.warn(`[e2e] llm.config 不存在：${LLM_CONFIG_PATH}，跳过默认模型配置`);
-    return null;
-  }
-  const line = (label: string): string => {
-    const match = raw.match(new RegExp(`^${label}\\s*[:\\t]\\s*(.+)$`, 'm'));
-    return match ? match[1].trim() : '';
-  };
-  const apiKey = line('api-key');
-  const baseUrl = line('base_url \\(OpenAI\\)');
-  const modelName = line('model \\(OpenAI\\)');
-  if (!apiKey || !baseUrl || !modelName) {
-    console.warn('[e2e] llm.config 字段不完整（api-key / base_url / model），跳过默认模型配置');
-    return null;
-  }
-  return { providerType: 'openai', baseUrl, modelName, apiKey };
-}
+// E2E 必须保证默认模型 key 恒非空。E2E 向 DB 提交的默认模型一律使用
+// DeepSeek（OpenAI 兼容协议，项目统一模型）；api_key 优先取环境变量
+// LLM_API_KEY（真实调用场景），缺失时回退占位 key——E2E 全程 mock，
+// preflight 仅校验非空，不触发真实调用。
+const E2E_DEFAULT_MODEL = {
+  providerType: 'openai',
+  baseUrl: 'https://api.deepseek.com',
+  modelName: 'deepseek-chat',
+  apiKey: process.env.LLM_API_KEY || 'e2e-test-key',
+};
 
 interface DocumentSummary {
   id: number;
@@ -98,13 +68,11 @@ function defaultModelLacksKey(models: ModelSummary[]): boolean {
 }
 
 /**
- * 确保默认模型 api_key 非空：无默认模型则创建（llm.config 真实配置），
- * key 为空则 PUT 补 llm.config 的 key。幂等；后端不可达或 llm.config
- * 不可用时静默跳过（不写入 dummy 模型）。
+ * 确保默认模型 api_key 非空：无默认模型则创建（DeepSeek 默认模型），
+ * key 为空则 PUT 补 key。幂等；后端不可达时静默跳过。
  */
 export async function ensureDefaultModelKey(): Promise<void> {
-  const llm = loadLlmConfig();
-  if (!llm) return;
+  const llm = E2E_DEFAULT_MODEL;
   const ctx = await apiRequest.newContext({ baseURL: BACKEND_BASE });
   try {
     const res = await ctx.get('/api/models');
@@ -183,11 +151,10 @@ async function getModelsSnapshot(): Promise<ModelSummary[]> {
 }
 
 async function restoreModels(snapshot: ModelSummary[]): Promise<void> {
-  // 重建快照用的 key：优先 llm.config 真实 key（DB 里不留 dummy 假数据）；
-  // llm.config 不可用时回退 dummy key 占位（无法恢复真实 key，且必须保持
-  // 非空——preflight 无条件检查配置，空 key 会打挂并行聊天测试）。
-  const llm = loadLlmConfig();
-  const restoreKey = llm?.apiKey || 'e2e-test-key';
+  // 重建快照用的 key：优先 DeepSeek 默认模型 key（DB 里不留 dummy 假数据）；
+  // 环境变量缺失时回退占位 key（无法恢复真实 key，且必须保持非空——
+  // preflight 无条件检查配置，空 key 会打挂并行聊天测试）。
+  const restoreKey = E2E_DEFAULT_MODEL.apiKey;
   const ctx = await apiRequest.newContext({ baseURL: BACKEND_BASE });
   try {
     // 先清空当前列表（删除全部，包括测试新增的记录）。
@@ -203,7 +170,7 @@ async function restoreModels(snapshot: ModelSummary[]): Promise<void> {
         await ctx.delete(`/api/models/${model.id}`).catch(() => {});
       }
     }
-    // 再按快照重建（api_key 用 llm.config 真实 key；不能恢复脱敏 key）。
+    // 再按快照重建（api_key 用 DeepSeek 默认 key；不能恢复脱敏 key）。
     for (const model of snapshot) {
       await ctx
         .post('/api/models', {
