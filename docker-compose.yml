@@ -1,5 +1,6 @@
 # #71：dense 向量存储迁至 PostgreSQL/pgvector，仅保留 postgres 服务。
 # embedding：Infinity 独立 embedding 服务（BAAI/bge-m3 常驻，后端不再进程内加载模型）。
+# #82：新增 backend 服务，前端/后端纯容器部署（前端见 #83）。
 services:
   postgres:
     container_name: docqa-postgres
@@ -46,6 +47,51 @@ services:
       timeout: 10s
       retries: 18
       start_period: 120s
+    restart: unless-stopped
+
+  backend:
+    container_name: docqa-backend
+    build:
+      context: ./backend
+    # 容器内通过 compose 服务名互访（取代 .env 中的 localhost 地址）：
+    # postgres 容器内端口 5432（宿主 55432 仅为宿主机访问）；
+    # embedding 容器内端口 7997。
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: docqa
+      POSTGRES_PASSWORD: docqa
+      POSTGRES_DB: docqa
+      EMBEDDING_PROVIDER: http
+      EMBEDDING_API_URL: http://embedding:7997
+      APP_ENV: production
+      # 与本地 .env 调优值一致：每路检索 top-20，融合后取 20 条交精排。
+      # （不传则回落 config 默认 5，容器问答证据包与本地开发不一致。）
+      RETRIEVAL_TOP_K: 20
+      RETRIEVAL_FUSED_TOP_N: 20
+    ports:
+      - "8000:8000"
+    # uploads（文档正文与封面）持久化：bind mount 宿主 backend/uploads，
+    # 与本地开发/E2E 语义一致（#65 重试测试通过写磁盘文件模拟故障修复）；
+    # 容器重建数据不丢。
+    volumes:
+      - ./backend/uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embedding:
+        condition: service_healthy
+    healthcheck:
+      # slim 镜像无 curl；用 python urllib 探活 /health。
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/health')
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
 volumes:
