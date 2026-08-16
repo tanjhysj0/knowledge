@@ -20,6 +20,9 @@ package-lock.json
 *.local
 *.tsbuildinfo
 
+# #83：前端容器化构建依赖锁文件，豁免忽略并纳入版本管理。
+!frontend/package-lock.json
+
 # Environment - only ignore backend/.env, keep .env.example
 backend/.env
 .coverage

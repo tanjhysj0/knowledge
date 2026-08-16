@@ -1,6 +1,7 @@
 # #71：dense 向量存储迁至 PostgreSQL/pgvector，仅保留 postgres 服务。
 # embedding：Infinity 独立 embedding 服务（BAAI/bge-m3 常驻，后端不再进程内加载模型）。
 # #82：新增 backend 服务，前端/后端纯容器部署（前端见 #83）。
+# #83：新增 frontend 服务，nginx 静态服务 + /api 反代 backend（SSE 不缓冲）。
 services:
   postgres:
     container_name: docqa-postgres
@@ -92,6 +93,27 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    container_name: docqa-frontend
+    build:
+      context: ./frontend
+    # 多阶段构建：node 产出静态资源，nginx 提供服务；80 为容器内端口。
+    # 宿主 8080 暴露给浏览器访问，/api 由 nginx 反代 backend 容器。
+    ports:
+      - "8080:80"
+    depends_on:
+      # 等 backend 健康后再启动，避免启动初期反代 502。
+      backend:
+        condition: service_healthy
+    healthcheck:
+      # alpine 无 curl；用 wget 探活首页。注意用 127.0.0.1 而非
+      # localhost（后者解析到 ::1，nginx 仅监听 IPv4 会误报失败）。
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
 volumes:

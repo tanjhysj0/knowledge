@@ -1,0 +1,7 @@
+# 构建不需要的内容（node_modules 由 Dockerfile 内 npm ci 生成）。
+node_modules/
+dist/
+.pytest_cache/
+test-results/
+e2e/
+playwright-report/

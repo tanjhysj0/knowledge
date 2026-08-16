@@ -15,6 +15,10 @@ from app.core.config import get_settings
 # BAAI/bge-m3 输出维度（与 ``settings.embedding_dim`` 默认值保持一致）。
 BGE_M3_DIM = 1024
 DEFAULT_API_URL = "http://localhost:7997"
+# 单请求最大文本数：bge-m3 在 CPU（Apple Silicon 容器内）编码慢，
+# 大批量一次请求易超时；分批后单请求耗时可控（#83 容器部署实测：
+# 16 条 500 字 chunk 在 CPU 竞争环境约 70s，取 8 条/批留充足余量）。
+_BATCH_SIZE = 8
 
 
 class RemoteEmbeddingProvider:
@@ -35,7 +39,7 @@ class RemoteEmbeddingProvider:
         model_name: Optional[str] = None,
         dim: Optional[int] = None,
         api_url: Optional[str] = None,
-        timeout: float = 60.0,
+        timeout: float = 120.0,
     ) -> None:
         # 允许注入（单测或后续动态切换）；默认从 settings 读。
         settings = get_settings()
@@ -57,13 +61,22 @@ class RemoteEmbeddingProvider:
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
         """把 ``texts`` 编码为 ``List[List[float]]``。
 
-        空列表直接返回 ``[]``，不发远端请求（与 local provider 行为一致）。
+        空列表直接返回 ``[]``，不发远端请求（与 local provider 行为一致）；
+        非空按 ``_BATCH_SIZE`` 分批提交，避免单请求过大在远端超时。
         """
         if not texts:
             return []
+        vectors: List[List[float]] = []
+        for batch_start in range(0, len(texts), _BATCH_SIZE):
+            batch = texts[batch_start : batch_start + _BATCH_SIZE]
+            vectors.extend(self._embed_batch(batch))
+        return vectors
+
+    def _embed_batch(self, batch: List[str]) -> List[List[float]]:
+        """编码单个批次：一次 ``POST /embeddings`` + 维度/数量校验。"""
         response = httpx.post(
             f"{self._api_url}/embeddings",
-            json={"model": self._model_name, "input": texts},
+            json={"model": self._model_name, "input": batch},
             timeout=self._timeout,
         )
         response.raise_for_status()
@@ -77,8 +90,8 @@ class RemoteEmbeddingProvider:
                     f"embedding 服务返回维度 {len(vector)} != 期望 {self._dim}（检查模型配置）"
                 )
             vectors.append(list(vector))
-        if len(vectors) != len(texts):
+        if len(vectors) != len(batch):
             raise RuntimeError(
-                f"embedding 服务返回 {len(vectors)} 条向量 != 请求 {len(texts)} 条"
+                f"embedding 服务返回 {len(vectors)} 条向量 != 请求 {len(batch)} 条"
             )
         return vectors
